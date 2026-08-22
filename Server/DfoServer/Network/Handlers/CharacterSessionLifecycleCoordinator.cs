@@ -3,6 +3,8 @@ using DfoServer.Game.DailyReset;
 using DfoServer.Game.Dungeon;
 using DfoServer.Game.Friends;
 using DfoServer.Game.Inventory;
+using DfoServer.Game.Mailbox;
+using DfoServer.Game.Progression;
 using DfoServer.Game.SelectCharacter;
 using DfoServer.Game.Session;
 using DfoServer.Infrastructure;
@@ -37,6 +39,7 @@ namespace DfoServer.Network.Handlers
         private readonly EventJoustHandler _eventJoustHandler;
         private readonly PvpRoomHandler _pvpRoomHandler;
         private readonly InventoryRefreshSender _inventoryRefreshSender;
+        private readonly MailboxService _levelUpRewardMailbox;
         private readonly IGameDatabase _database;
         private readonly DailyResetService _dailyResetService;
 
@@ -56,6 +59,7 @@ namespace DfoServer.Network.Handlers
             EventJoustHandler eventJoustHandler,
             PvpRoomHandler pvpRoomHandler,
             InventoryRefreshSender inventoryRefreshSender,
+            MailboxService levelUpRewardMailbox,
             IGameDatabase database,
             DailyResetService dailyResetService = null)
         {
@@ -74,6 +78,8 @@ namespace DfoServer.Network.Handlers
             _eventJoustHandler = eventJoustHandler;
             _pvpRoomHandler = pvpRoomHandler;
             _inventoryRefreshSender = inventoryRefreshSender;
+            _levelUpRewardMailbox = levelUpRewardMailbox
+                ?? throw new ArgumentNullException(nameof(levelUpRewardMailbox));
             _database = database ?? throw new ArgumentNullException(nameof(database));
             _dailyResetService = dailyResetService ?? new DailyResetService(_database);
         }
@@ -447,6 +453,17 @@ namespace DfoServer.Network.Handlers
                     EpicBuffPotionBuffNotifier.ScheduleRemoveForCurrentEffect(
                         session,
                         selectedCharacterId);
+                    // Keep reward recovery before quest and pet initialization so
+                    // login-time mail delivery is completed in the selected-character flow.
+                    var recoveredRewards = CharacterLevelUpRewardService.Recover(
+                        _levelUpRewardMailbox,
+                        selectedCharacter.CharacterId,
+                        selectedCharacter.AccountId,
+                        selectedCharacter.DisplayName,
+                        selectedCharacter.Level);
+                    await CharacterLevelUpRewardNotificationSender.SendAsync(
+                        session,
+                        recoveredRewards);
                     await session.GameSession.QuestManager
                         .SyncItemSeekingQuestProgressAsync(null);
                     await PetCreatureRuntimeService.BeginTownAsync(

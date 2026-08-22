@@ -39,6 +39,26 @@ namespace DfoServer.Game.Mailbox
             return _repository.SendSystemMail(request);
         }
 
+        // Mailbox owns the notification decision because it depends on the
+        // recipient's persisted, unclaimed-attachment state.
+        public MailboxSystemMailDeliveryResult SendSystemMailWithAlarmDecision(
+            MailboxSendRequest request)
+        {
+            var result = new MailboxSystemMailDeliveryResult();
+            try
+            {
+                result.NotifyMailboxAlarm = request != null
+                    && _repository.HasUnclaimedAttachments(request.ReceiverCharacterId);
+            }
+            catch (Exception ex)
+            {
+                FileLogger.Log($"[Mailbox] SYSTEM_SEND alarm state unavailable: {ex.Message}");
+            }
+
+            result.SendResult = SendSystemMail(request);
+            return result;
+        }
+
         public MailboxSendResult SendSystemMails(IReadOnlyList<MailboxSendRequest> requests)
         {
             try
@@ -97,6 +117,11 @@ namespace DfoServer.Game.Mailbox
         public MailboxInboxPage LoadInboxPage(int characterId, int limit)
         {
             return _repository.LoadInboxPage(characterId, limit);
+        }
+
+        public bool HasUnclaimedAttachments(int characterId)
+        {
+            return _repository.HasUnclaimedAttachments(characterId);
         }
 
         public MailboxClaimResult ClaimMail(int characterId, long messageId)

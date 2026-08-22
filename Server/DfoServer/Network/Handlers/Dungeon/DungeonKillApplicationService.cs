@@ -5,6 +5,7 @@ using DfoServer.Network.Builders;
 using DfoServer.Network.Handlers.Pets;
 using System;
 using System.Collections.Generic;
+using System.Text;
 using System.Threading.Tasks;
 using DungeonData = DfoServer.GameWorld.Dungeon;
 
@@ -905,6 +906,15 @@ namespace DfoServer.Network.Handlers.Dungeon
                     awardedExp,
                     ExperiencePersistMode.OnLevelUpOnly,
                     "dungeon-kill");
+                var deliveredRewards = CharacterLevelUpRewardService.Deliver(
+                    _services.Mailbox,
+                    session.Player.CharacterId,
+                    session.Account?.AccountId ?? 0,
+                    Encoding.UTF8.GetString(session.Player.Name ?? Array.Empty<byte>()),
+                    grant);
+                await CharacterLevelUpRewardNotificationSender.SendAsync(
+                    session,
+                    deliveredRewards);
             }
 
             lock (run.SyncRoot)

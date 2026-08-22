@@ -99,6 +99,9 @@ namespace DfoServer.Game.Mailbox
     public sealed class MailboxSendResult
     {
         public bool Success { get; set; }
+        // True only when an idempotency key resolved to a mail already stored.
+        // Callers must not project "new mail" UI for this result.
+        public bool AlreadyExists { get; set; }
         public MailboxSendError Error { get; set; }
         public long MessageId { get; set; }
         public int FeeGold { get; set; }
@@ -108,6 +111,12 @@ namespace DfoServer.Game.Mailbox
         {
             return new MailboxSendResult { Success = false, Error = error };
         }
+    }
+
+    public sealed class MailboxSystemMailDeliveryResult
+    {
+        public MailboxSendResult SendResult { get; set; } = MailboxSendResult.Fail(MailboxSendError.InvalidRequest);
+        public bool NotifyMailboxAlarm { get; set; }
     }
 
     public sealed class MailboxCampaignBatchResult

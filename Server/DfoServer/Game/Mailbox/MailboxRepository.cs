@@ -158,6 +158,34 @@ namespace DfoServer.Game.Mailbox
             return LoadInboxPage(characterId, limit).Entries;
         }
 
+        public bool HasUnclaimedAttachments(int characterId)
+        {
+            if (characterId <= 0)
+                return false;
+
+            using (var connection = new SqliteConnection(_connectionString))
+            {
+                connection.Open();
+                using (var command = connection.CreateCommand())
+                {
+                    command.CommandText = @"
+SELECT EXISTS (
+    SELECT 1
+    FROM mailbox_recipients r
+    JOIN mailbox_messages m ON m.message_id = r.message_id
+    JOIN mailbox_attachments a ON a.message_id = m.message_id
+    WHERE r.character_id = @cid
+      AND r.folder = 0
+      AND r.deleted_flag = 0
+      AND a.claimed_flag = 0
+      AND (r.saved_flag = 1 OR m.unlimited_flag != 0 OR datetime(m.expire_at) > datetime('now'))
+);";
+                    command.Parameters.AddWithValue("@cid", characterId);
+                    return Convert.ToInt32(command.ExecuteScalar()) != 0;
+                }
+            }
+        }
+
         public MailboxExpirationBatchResult MaintainExpiredMail(int expireBatchSize = 200, int purgeBatchSize = 100)
         {
             using (var connection = new SqliteConnection(_connectionString))
@@ -2236,6 +2264,7 @@ LIMIT 1;";
             result = new MailboxSendResult
             {
                 Success = true,
+                AlreadyExists = true,
                 Error = MailboxSendError.None,
                 MessageId = messageId,
                 FeeGold = feeGold,
