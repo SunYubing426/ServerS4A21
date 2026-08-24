@@ -50,6 +50,66 @@ namespace DfoServer.Network.Handlers
             }
 
             var (characterId, accountId) = ResolveOwner(session);
+
+            // SP/TP 技能书由 86JP 客户端通过 INCREASE_STATUS 发送，
+            // 请求体只有主背包槽位，必须先按槽位解析物品再进入经验道具分支。
+            if (TryGetOwnedInventoryLease(session, characterId, out var lease))
+            {
+                var skillPointBookResult = SkillPointBookUseService.TryCommitUse(
+                    lease,
+                    InventoryListType.Main,
+                    request.SlotIndex,
+                    expectedItemTemplateId: 0);
+                if (skillPointBookResult.Handled)
+                {
+                    await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
+                        0x01,
+                        (ushort)CmdPacketType.INCREASE_STATUS,
+                        skillPointBookResult.Success
+                            ? IncreaseStatusAckBuilder.BuildExperienceSuccess(
+                                session.Player.UserId)
+                            : IncreaseStatusAckBuilder.BuildError(
+                                IncreaseStatusUnknownErrorCode)));
+
+                    if (!skillPointBookResult.Success)
+                    {
+                        await RefreshExperienceSourceSlotAsync(
+                            session,
+                            characterId,
+                            request.SlotIndex,
+                            "skill-point-book-rejected");
+                        FileLogger.Log(
+                            $"[{ProtocolName}] INCREASE_STATUS skill-point-book failed: " +
+                            $"cid={characterId} item={skillPointBookResult.ItemTemplateId} " +
+                            $"slot={request.SlotIndex}");
+                        return;
+                    }
+
+                    await RefreshExperienceSourceSlotAsync(
+                        session,
+                        characterId,
+                        request.SlotIndex,
+                        "skill-point-book-post-commit");
+                    await SendSkillPointBookSkillSyncAsync(
+                        session,
+                        characterId,
+                        accountId);
+                    if (skillPointBookResult.Mutation?.UsableCountState != null)
+                    {
+                        await SendUsableCountLimitUpdateAsync(
+                            session,
+                            skillPointBookResult.Mutation.UsableCountState);
+                    }
+
+                    FileLogger.Log(
+                        $"[{ProtocolName}] INCREASE_STATUS skill-point-book committed: " +
+                        $"cid={characterId} item={skillPointBookResult.ItemTemplateId} " +
+                        $"slot={request.SlotIndex} sp+={skillPointBookResult.Grant.Sp} " +
+                        $"tp+={skillPointBookResult.Grant.Tp}");
+                    return;
+                }
+            }
+
             ExperienceItemUseResult result;
             try
             {

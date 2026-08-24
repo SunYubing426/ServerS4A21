@@ -1,4 +1,5 @@
 using System;
+using Microsoft.Data.Sqlite;
 
 namespace DfoServer.Game.Inventory
 {
@@ -93,6 +94,23 @@ namespace DfoServer.Game.Inventory
             short slotIndex,
             int expectedItemId)
         {
+            return TryCommitStackableUseDetailed(
+                lease,
+                listType,
+                slotIndex,
+                expectedItemId,
+                applyEffect: null);
+        }
+
+        // 需要和背包消耗保持原子性的特殊消耗品（例如 SP/TP 技能书）在此注入角色效果。
+        // 效果先于扣除物品执行；任一写入失败会由同一个事务一起回滚。
+        internal static InventoryStackableUseCommitResult TryCommitStackableUseDetailed(
+            InventoryLease lease,
+            InventoryListType listType,
+            short slotIndex,
+            int expectedItemId,
+            Func<SqliteConnection, SqliteTransaction, int, bool> applyEffect)
+        {
             if (lease?.Inventory == null)
                 return null;
 
@@ -134,6 +152,12 @@ namespace DfoServer.Game.Inventory
 
                     if (!lifecyclePlan.Success)
                         return false;
+
+                    if (applyEffect != null
+                        && !applyEffect(connection, transaction, resolvedItemId))
+                    {
+                        return false;
+                    }
 
                     if (!UsableCountLimitService.TryRecordUseIfLimited(
                             connection,
