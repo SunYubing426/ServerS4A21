@@ -162,6 +162,9 @@ namespace DfoServer
             }
             GameNetworkConfig.Configure(args);
             GameNetworkConfig.ValidateRelayConfiguration();
+            Infrastructure.GatewayAdmission.ConfigureFromEnvironment();
+            if (Infrastructure.GatewayAdmission.Enabled)
+                Console.WriteLine("[Gateway] LOGIN ticket admission enabled");
 
             // 频道目录驱动监听集合: 每频道一个独立 TCP 端口(10000+频道号),
             // 客户端连哪个端口, CHANNELINFO 就带哪个频道身份。

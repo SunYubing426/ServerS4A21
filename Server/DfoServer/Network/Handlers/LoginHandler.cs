@@ -65,27 +65,43 @@ namespace DfoServer.Network.Handlers
 
             try
             {
-                var mId = DefaultLoginMid;
-                var passwordHash = string.Empty;
-                if (LoginRequestParser.TryParse(body, out var parsed))
+                if (GatewayAdmission.Enabled)
                 {
-                    mId = parsed.MId;
-                    passwordHash = parsed.PasswordHash ?? string.Empty;
-                    FileLogger.Log($"[{ProtocolName}] Login request parsed: m_id={mId} pwd_md5={passwordHash}");
+                    if (session.Account != null)
+                    {
+                        FileLogger.Log(
+                            $"[{ProtocolName}] GATEWAY LOGIN rejected: already bound account_id={session.Account.AccountId}");
+                        session.Close();
+                        return;
+                    }
+
+                    var admitted = await TryAdmitGatewayLoginAsync(session, body);
+                    if (!admitted.ok)
+                        return;
+                    BindAccount(session, admitted.mid, string.Empty);
                 }
                 else
                 {
-                    FileLogger.Log($"[{ProtocolName}] Login body unparseable, falling back to m_id={DefaultLoginMid}");
+                    var mId = DefaultLoginMid;
+                    var passwordHash = string.Empty;
+                    if (LoginRequestParser.TryParse(body, out var parsed))
+                    {
+                        mId = parsed.MId;
+                        passwordHash = parsed.PasswordHash ?? string.Empty;
+                        FileLogger.Log($"[{ProtocolName}] Login request parsed: m_id={mId} pwd_md5={passwordHash}");
+                    }
+                    else
+                    {
+                        FileLogger.Log($"[{ProtocolName}] Login body unparseable, falling back to m_id={DefaultLoginMid}");
+                    }
+
+                    BindAccount(session, mId, passwordHash);
                 }
 
-                var account = _accountRepository.GetByMid(mId);
+                var account = session.Account;
                 if (account == null)
-                {
-                    var newId = _accountRepository.Create(mId, passwordHash);
-                    account = _accountRepository.GetById(newId);
-                    FileLogger.Log($"[{ProtocolName}] Login auto-created account id={newId} m_id={mId}");
-                }
-                session.Account = account;
+                    return;
+
                 var remoteIp = session.TcpClient?.Client?.RemoteEndPoint?.ToString() ?? string.Empty;
                 _accountRepository.UpdateLastLogin(account.AccountId, remoteIp, DateTime.UtcNow);
                 FileLogger.Log($"[{ProtocolName}] Login bound session {session.SessionId} -> account_id={account.AccountId} m_id={account.MId}");
@@ -136,6 +152,49 @@ namespace DfoServer.Network.Handlers
             bool freeDuelChannelEnabled)
             => !GameNetworkConfig.IsFreeDuelListener(listenerPort)
                || freeDuelChannelEnabled;
+
+        private async Task<(bool ok, string mid)> TryAdmitGatewayLoginAsync(
+            EnhancedClientSession session,
+            byte[] body)
+        {
+            if (!LoginRequestParser.TryParse(body, out var parsed)
+                || string.IsNullOrEmpty(parsed.MId)
+                || string.IsNullOrEmpty(parsed.PasswordHash))
+            {
+                FileLogger.Log($"[{ProtocolName}] GATEWAY LOGIN rejected: unparseable");
+                session.Close();
+                return (false, "");
+            }
+
+            var claimed = parsed.MId.Trim();
+            var consumed = await GatewayAdmission.TryConsumeTicketAsync(claimed, parsed.PasswordHash);
+            if (!consumed.ok)
+            {
+                FileLogger.Log($"[{ProtocolName}] GATEWAY LOGIN rejected mid={claimed}");
+                session.Close();
+                return (false, "");
+            }
+
+            FileLogger.Log($"[{ProtocolName}] GATEWAY LOGIN ticket ok mid={consumed.mid}");
+            return (true, consumed.mid);
+        }
+
+        private void BindAccount(
+            EnhancedClientSession session,
+            string mId,
+            string passwordHash)
+        {
+            mId = (mId ?? "").Trim();
+            var account = _accountRepository.GetByMid(mId);
+            if (account == null)
+            {
+                var newId = _accountRepository.Create(mId, passwordHash ?? string.Empty);
+                account = _accountRepository.GetById(newId);
+                FileLogger.Log($"[{ProtocolName}] Login created account id={newId} m_id={mId}");
+            }
+
+            session.Account = account;
+        }
 
         private bool EnsureListenerAdmission(
             EnhancedClientSession session,
