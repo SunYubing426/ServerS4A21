@@ -24,6 +24,9 @@ namespace DfoServer.Network
 {
     public class GameProtocolHandler : BaseProtocolHandler, IDisposable
     {
+        private static readonly TimeSpan DungeonLoadingTimeout =
+            TimeSpan.FromSeconds(45);
+
         private readonly LoginHandler _loginHandler;
         private readonly CharacterSelectHandler _characterSelectHandler;
         private readonly GrowupChangeHandler _growupChangeHandler;
@@ -200,9 +203,18 @@ namespace DfoServer.Network
             _shopCoinEventHandler = featureHandlers.ShopCoinEvent;
             _mercenaryHandler = featureHandlers.Mercenary;
             _partyHandler = socialHandlers.Party;
+            _townHandler.ConfigureDungeonGiveupPartyDeparture(
+                _partyHandler.HandleDungeonGiveupWithinTransitionAsync);
+            _townHandler.ConfigureTownPartyListPublisher(
+                _partyHandler.PublishTownPartyListsAsync);
+            _dungeonHandler.ConfigureTownPartyListPublisher(
+                _partyHandler.PublishTownPartyListsAsync);
             _raidHandler = socialHandlers.Raid;
             _chatHandler = socialHandlers.Chat;
             _dungeonRejoin = socialHandlers.DungeonRejoin;
+            _dungeonHandler.ConfigureLoadingProjectionStarted(
+                ScheduleDungeonLoadingTimeout,
+                HandleDungeonLoadingProjectionRejectedAsync);
             _growthCapsuleHandler = featureHandlers.GrowthCapsule;
             _goldLimitHandler = featureHandlers.GoldLimit;
             _craneMiniGameHandler = featureHandlers.CraneMiniGame;
@@ -344,7 +356,7 @@ namespace DfoServer.Network
             };                                                      // 13 leave party
             d[0x000E] = _partyHandler.Handle_WALKOUT_PARTY_MEMBER;  // 14 踢人
             d[0x000A] = _partyHandler.Handle_REQUEST_PEER;          // 10 右键同屏玩家→组队/交易邀请(按uid)→给目标发 SC 0x0007 弹框
-            d[0x000B] = _partyHandler.Handle_RES_PEER;              // 11 被邀请者应答(body=邀请者uid+reqType)→组队并广播 PARTY_INFO
+            d[0x000B] = _partyHandler.Handle_RES_PEER;              // 11 被邀请者应答: type0 7B接受/9B拒绝；仅接受才组队
             // 419 creates a chat/1:1 conversation; party invites use 0x000A/0x000B.
             d[0x01A3] = _chatHandler.Handle_CREATE_GROUP;
             d[(ushort)CmdPacketType.ONE_TO_ONE_CHAT_STATE] =
@@ -599,16 +611,319 @@ namespace DfoServer.Network
                     reason);
         }
 
+        private async Task HandleGiveupGame(
+            EnhancedClientSession session,
+            GamePacketHeader header,
+            byte[] body)
+        {
+            await HandleRaidAwareDungeonExit(
+                session,
+                header,
+                body,
+                _townHandler.Handle_ENUM_CMDPACKET_GIVEUP_GAME,
+                "giveup");
+        }
+
         private async Task HandleRaidAwareFinishLoading(
             EnhancedClientSession session,
             GamePacketHeader header,
             byte[] body)
         {
-            await _townHandler.Handle_ENUM_CMDPACKET_FINISH_LOADING(
-                session,
-                header,
-                body);
+            var run = session?.Player?.CurrentRun;
+            if (run == null)
+            {
+                await _townHandler.Handle_ENUM_CMDPACKET_FINISH_LOADING(
+                    session,
+                    header,
+                    body);
+            }
+            else
+            {
+                await HandleDungeonFinishLoadingAsync(session, run);
+            }
             await _raidHandler.HandleDungeonLoadedAsync(session);
+        }
+
+        private async Task HandleDungeonFinishLoadingAsync(
+            EnhancedClientSession session,
+            DungeonRun run)
+        {
+            var participantRoom = run.CaptureParticipantRoomIdentity();
+            if (!participantRoom.IsValid
+                || !run.Instance.TryGetRoom(
+                    participantRoom.Room.RoomInstanceId,
+                    out var room))
+            {
+                FileLogger.Log(
+                    $"[GameProtocol] DUNGEON_LOAD fallback: " +
+                    $"cid={session?.Player?.CharacterId ?? 0} " +
+                    $"run={run?.RunId ?? 0} room={run?.CurrentRoomInstanceId ?? 0}");
+                await _townHandler.SendFinishLoadingCompletionAsync(session);
+                return;
+            }
+
+            var activeParticipants = CaptureDungeonLoadingParticipants(
+                participantRoom.Room.Instance);
+            var ready = room.MarkLoadingReady(
+                participantRoom.Run,
+                activeParticipants);
+            if (!ready.Accepted)
+            {
+                FileLogger.Log(
+                    $"[GameProtocol] DUNGEON_LOAD ignored stale/duplicate: " +
+                    $"cid={session.Player.CharacterId} " +
+                    $"instance={participantRoom.Room.Instance.PartyDungeonInstanceId} " +
+                    $"room={participantRoom.Room.RoomInstanceId}");
+                return;
+            }
+
+            FileLogger.Log(
+                $"[GameProtocol] DUNGEON_LOAD ready: " +
+                $"cid={session.Player.CharacterId} " +
+                $"instance={participantRoom.Room.Instance.PartyDungeonInstanceId} " +
+                $"room={participantRoom.Room.RoomInstanceId} " +
+                $"generation={ready.Generation} release={ready.Released}");
+            if (ready.Released)
+            {
+                await SendDungeonLoadingCompletionAsync(
+                    participantRoom.Room,
+                    ready.Participants,
+                    "all-ready");
+                return;
+            }
+
+        }
+
+        private List<DungeonRunIdentity> CaptureDungeonLoadingParticipants(
+            DungeonInstanceIdentity instanceIdentity)
+        {
+            var result = new List<DungeonRunIdentity>();
+            foreach (var participant in _dungeonInstances
+                         .CaptureInstanceParticipantRoster(instanceIdentity))
+            {
+                if (participant.RunIdentity.IsValid
+                    && !result.Contains(participant.RunIdentity))
+                    result.Add(participant.RunIdentity);
+            }
+            return result;
+        }
+
+        private async Task SendDungeonLoadingCompletionAsync(
+            DungeonRoomIdentity roomIdentity,
+            IReadOnlyList<DungeonRunIdentity> participants,
+            string reason)
+        {
+            if (!roomIdentity.IsValid || participants == null)
+                return;
+
+            var releases = new List<Task<bool>>();
+            var sessions = _worldDependencies.Sessions;
+            var roster = _dungeonInstances.CaptureParticipantRoster(roomIdentity);
+            foreach (var participant in roster)
+            {
+                if (!ContainsRunIdentity(participants, participant.RunIdentity)
+                    || !sessions.TryGet(
+                        participant.CharacterId,
+                        out var candidate)
+                    || candidate?.Player == null
+                    || candidate.TcpClient == null
+                    || !candidate.TcpClient.Connected
+                    || !candidate.Player.IsCurrentDungeonParticipantRoom(
+                        new DungeonParticipantRoomIdentity(
+                            participant.RunIdentity,
+                            roomIdentity)))
+                {
+                    continue;
+                }
+
+                releases.Add(TrySendDungeonLoadingCompletionAsync(candidate));
+            }
+
+            var releaseResults = await Task.WhenAll(releases);
+            var releasedCount = 0;
+            for (var i = 0; i < releaseResults.Length; i++)
+            {
+                if (releaseResults[i])
+                    releasedCount++;
+            }
+            FileLogger.Log(
+                $"[GameProtocol] DUNGEON_LOAD released: " +
+                $"instance={roomIdentity.Instance.PartyDungeonInstanceId} " +
+                $"room={roomIdentity.RoomInstanceId} " +
+                $"reason={reason} participants={releasedCount}/{participants.Count}");
+        }
+
+        private async Task<bool> TrySendDungeonLoadingCompletionAsync(
+            EnhancedClientSession session)
+        {
+            try
+            {
+                await _townHandler.SendFinishLoadingCompletionAsync(session);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                FileLogger.Log(
+                    $"[GameProtocol] DUNGEON_LOAD release failed: " +
+                    $"cid={session?.Player?.CharacterId ?? 0} " +
+                    $"error={ex.Message}");
+                return false;
+            }
+        }
+
+        private void ScheduleDungeonLoadingTimeout(
+            DungeonRoomIdentity roomIdentity,
+            DungeonInstanceRoom room,
+            long generation)
+        {
+            var timerName =
+                $"a21-dungeon-load-{roomIdentity.Instance.PartyDungeonInstanceId}-" +
+                $"{roomIdentity.RoomInstanceId}-{generation}";
+            ClockService.Instance.ScheduleOneShotAfterAsync(
+                timerName,
+                DungeonLoadingTimeout,
+                async _ => await HandleDungeonLoadingTimeoutAsync(
+                    roomIdentity,
+                    room,
+                    generation));
+        }
+
+        private async Task HandleDungeonLoadingProjectionRejectedAsync(
+            EnhancedClientSession session,
+            DungeonRunIdentity runIdentity,
+            DungeonRoomIdentity roomIdentity)
+        {
+            if (session?.Player == null
+                || !session.Player.IsCurrentDungeonParticipantRoom(
+                    new DungeonParticipantRoomIdentity(
+                        runIdentity,
+                        roomIdentity)))
+            {
+                return;
+            }
+
+            await HandleGiveupGame(
+                session,
+                new GamePacketHeader
+                {
+                    cmd = 0x01,
+                    type = 0x002A,
+                },
+                Array.Empty<byte>());
+        }
+
+        private async Task HandleDungeonLoadingTimeoutAsync(
+            DungeonRoomIdentity roomIdentity,
+            DungeonInstanceRoom room,
+            long generation)
+        {
+            var activeParticipants = CaptureDungeonLoadingParticipants(
+                roomIdentity.Instance);
+            var timeout = room.ForceLoadingCompletion(
+                generation,
+                activeParticipants);
+            if (!timeout.Accepted)
+                return;
+
+            FileLogger.Log(
+                $"[GameProtocol] DUNGEON_LOAD timeout: " +
+                $"instance={roomIdentity.Instance.PartyDungeonInstanceId} " +
+                $"room={roomIdentity.RoomInstanceId} generation={generation} " +
+                $"ready={timeout.ReadyParticipants.Count} " +
+                $"missing={timeout.MissingParticipants.Count}");
+
+            var sessions = _worldDependencies.Sessions;
+            var missingCandidates = new List<(
+                EnhancedClientSession Session,
+                DungeonRunIdentity RunIdentity,
+                int CharacterId)>();
+            var instanceRoster = _dungeonInstances
+                .CaptureInstanceParticipantRoster(roomIdentity.Instance);
+            foreach (var participant in instanceRoster)
+            {
+                if (!ContainsRunIdentity(
+                        timeout.MissingParticipants,
+                        participant.RunIdentity)
+                    || !sessions.TryGet(
+                        participant.CharacterId,
+                        out var candidate)
+                    || candidate?.Player == null
+                    || !candidate.Player.IsCurrentDungeonRun(
+                        participant.RunIdentity))
+                {
+                    continue;
+                }
+
+                var candidateRun = candidate.Player.CurrentRun;
+                if (candidateRun != null
+                    && candidateRun.TryCancelLoadingProjection(
+                        timeout.ProjectionId))
+                {
+                    missingCandidates.Add((
+                        candidate,
+                        participant.RunIdentity,
+                        participant.CharacterId));
+                }
+            }
+
+            // Cancel stale producers synchronously, then commit survivor
+            // progress before cleanup touches storage or a failed socket.
+            if (timeout.Released)
+            {
+                await SendDungeonLoadingCompletionAsync(
+                    roomIdentity,
+                    timeout.ReadyParticipants,
+                    "timeout");
+            }
+
+            foreach (var missing in missingCandidates)
+            {
+                var candidate = missing.Session;
+                var candidateRun = candidate?.Player?.CurrentRun;
+                if (candidateRun == null
+                    || !candidate.Player.IsCurrentDungeonRun(
+                        missing.RunIdentity)
+                    || !candidateRun.IsLoadingProjectionCanceled(
+                        timeout.ProjectionId))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    await HandleGiveupGame(
+                        candidate,
+                        new GamePacketHeader
+                        {
+                            cmd = 0x01,
+                            type = 0x002A,
+                        },
+                        Array.Empty<byte>());
+                }
+                catch (Exception ex)
+                {
+                    FileLogger.Log(
+                        $"[GameProtocol] DUNGEON_LOAD missing cleanup failed: " +
+                        $"cid={missing.CharacterId} " +
+                        $"instance={roomIdentity.Instance.PartyDungeonInstanceId} " +
+                        $"room={roomIdentity.RoomInstanceId} " +
+                        $"error={ex.Message}");
+                }
+            }
+        }
+
+        private static bool ContainsRunIdentity(
+            IReadOnlyList<DungeonRunIdentity> participants,
+            DungeonRunIdentity candidate)
+        {
+            if (participants == null)
+                return false;
+            for (var i = 0; i < participants.Count; i++)
+            {
+                if (participants[i].Equals(candidate))
+                    return true;
+            }
+            return false;
         }
 
         private async Task HandleRaidAwareCharacterDeath(
@@ -723,7 +1038,7 @@ namespace DfoServer.Network
                 await _expertJobStoreHandler.SendAreaStoresToAsync(s);
             };
             d[(ushort)CmdPacketTypeA21.FINISH_LOADING] = HandleRaidAwareFinishLoading;
-            d[0x002A] = (s, h, b) => HandleRaidAwareDungeonExit(s, h, b, _townHandler.Handle_ENUM_CMDPACKET_GIVEUP_GAME, "giveup");
+            d[0x002A] = HandleGiveupGame;
             d[0x0084] = (s, h, b) => HandleRaidAwareDungeonExit(s, h, b, _townHandler.Handle_ENUM_CMDPACKET_GIVEUP_GAME, "back-to-village");
             d[0x00ED] = _townHandler.Handle_ENUM_CMDPACKET_TELEPORT;
             d[(ushort)CmdPacketTypeA21.GET_PCROOM_TIME_POINT_ITEM] =

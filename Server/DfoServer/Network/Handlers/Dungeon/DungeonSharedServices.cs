@@ -187,7 +187,8 @@ namespace DfoServer.Network.Handlers.Dungeon
                     new Game.Dungeon.TowerOfDespairProgressRepository(
                         Database));
             CardRewards = new CardRewardCoordinator(
-                new Game.Dungeon.CardRewardService(PersistentEffects));
+                new Game.Dungeon.CardRewardService(PersistentEffects),
+                sessions: Sessions);
             AdmissionRejects = new DungeonAdmissionRejectSender();
         }
     }
