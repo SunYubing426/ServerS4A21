@@ -306,6 +306,17 @@ namespace DfoServer.Network.Handlers
             EnhancedClientSession session,
             GamePacketHeader header)
         {
+            if (session?.Account == null
+                && !IsPreAuthenticationCommandAllowed(header))
+            {
+                FileLogger.Log(
+                    $"[{ProtocolName}] Packet rejected before LOGIN: " +
+                    $"session={session?.SessionId} cmd={header.cmd} " +
+                    $"type=0x{header.type:X4}");
+                session?.Close();
+                return false;
+            }
+
             if (OwnsRegisteredGeneration(_sessionDirectory, session))
                 return true;
 
@@ -314,6 +325,16 @@ namespace DfoServer.Network.Handlers
                 $"cid={session?.Player?.CharacterId ?? 0} " +
                 $"session={session?.SessionId} type=0x{header.type:X4}");
             return false;
+        }
+
+        private static bool IsPreAuthenticationCommandAllowed(
+            GamePacketHeader header)
+        {
+            if (header.cmd != 1)
+                return false;
+
+            return header.type == (ushort)CmdPacketTypeA21.LOGIN
+                || header.type == 0x04DD;
         }
 
         internal async Task HandleSelectCharacterAsync(
@@ -626,11 +647,6 @@ namespace DfoServer.Network.Handlers
                 }
             }
 
-            if (record == null)
-            {
-                record = _characterRepository.GetById(
-                    _selectCharacterDataSource.GetSeedCharacterId());
-            }
             selectedSlot = slot;
             return record;
         }

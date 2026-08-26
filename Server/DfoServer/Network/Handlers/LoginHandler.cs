@@ -6,6 +6,7 @@ using DfoServer.Network.Builders;
 using DfoServer.Network.Builders.Auction;
 using DfoServer.Network.Parsers;
 using System;
+using System.Net;
 using System.Threading.Tasks;
 
 namespace DfoServer.Network.Handlers
@@ -109,6 +110,7 @@ namespace DfoServer.Network.Handlers
             catch (Exception ex)
             {
                 FileLogger.Log($"[{ProtocolName}] Login account lookup failed: {ex.Message}");
+                session.Close();
                 return;
             }
 
@@ -200,6 +202,19 @@ namespace DfoServer.Network.Handlers
             EnhancedClientSession session,
             string stage)
         {
+            var remoteAddress = (session?.TcpClient?.Client?.RemoteEndPoint
+                as IPEndPoint)?.Address;
+            if (!GatewayAdmission.IsClientAddressAllowed(
+                    GatewayAdmission.Enabled,
+                    remoteAddress))
+            {
+                FileLogger.Log(
+                    $"[{ProtocolName}] LEGACY LOGIN REJECTED: " +
+                    $"stage={stage} remote={remoteAddress}");
+                session?.Close();
+                return false;
+            }
+
             if (IsListenerAdmissionAllowed(
                     session.ListenerPort,
                     GameNetworkConfig.FreeDuelListenerEnabled))
