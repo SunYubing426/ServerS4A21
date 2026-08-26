@@ -288,6 +288,51 @@ namespace DfoServer.Network.Handlers
                 return;
             }
 
+            if (TryGetOwnedInventoryLease(session, cid, out lease))
+            {
+                var skillPointBookResult = SkillPointBookUseService.TryCommitUse(
+                    lease,
+                    listType,
+                    slotIndex,
+                    itemCode);
+                if (skillPointBookResult.Handled)
+                {
+                    var responseItemCode = skillPointBookResult.ItemTemplateId > 0
+                        ? skillPointBookResult.ItemTemplateId
+                        : itemCode;
+                    if (!skillPointBookResult.Success)
+                    {
+                        await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
+                            0x01,
+                            header.type,
+                            UseStackableAckBuilder.BuildError(
+                                (byte)listType,
+                                instanceValue,
+                                responseItemCode)));
+                        FileLogger.Log(
+                            $"[{ProtocolName}] USE_STACKABLE skill-point-book failed " +
+                            $"cid={cid} item=0x{responseItemCode:X8} slot={slotIndex}");
+                        return;
+                    }
+
+                    await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
+                        0x01,
+                        header.type,
+                        UseStackableAckBuilder.BuildSuccess(
+                            slotIndex,
+                            (byte)listType,
+                            instanceValue,
+                            responseItemCode)));
+                    await _refresh.SendUpdateItemList(session, listType, slotIndex);
+                    await SendSkillPointBookSkillSyncAsync(session, cid, aid);
+                    FileLogger.Log(
+                        $"[{ProtocolName}] USE_STACKABLE skill-point-book committed " +
+                        $"cid={cid} item=0x{responseItemCode:X8} " +
+                        $"sp+={skillPointBookResult.Grant.Sp} tp+={skillPointBookResult.Grant.Tp}");
+                    return;
+                }
+            }
+
             InventoryMutationResult result = null;
             InventoryStackableUseCommitResult stackableUseResult = null;
             if (TryGetOwnedInventoryLease(session, cid, out lease))
@@ -330,6 +375,33 @@ namespace DfoServer.Network.Handlers
                 ? $" petSatiety key={result.PetCreatureKey} {result.PetSatietyBefore}->{result.PetSatietyAfter}"
                 : string.Empty;
             FileLogger.Log($"[{ProtocolName}] USE_STACKABLE: consumed 1x item 0x{itemCode:X8} from slot {slotIndex}, remaining={result.RemainingStackCount}{petSatietyLog}");
+        }
+
+        private async Task SendSkillPointBookSkillSyncAsync(
+            EnhancedClientSession session,
+            int characterId,
+            int accountId)
+        {
+            try
+            {
+                _sqliteSelectCharacterDataSource.PrepareForSkillSynchronization(
+                    characterId,
+                    accountId);
+                var snapshot = _sqliteSelectCharacterDataSource.Load(
+                    characterId,
+                    accountId);
+                await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
+                    0x00,
+                    (ushort)NotiPacketTypeA21.SKILLINFO,
+                    SkillInfoBodyBuilder.BuildFrom(
+                        snapshot.InitializationSnapshot.SkillInfo)));
+            }
+            catch (Exception ex)
+            {
+                FileLogger.Log(
+                    $"[{ProtocolName}] USE_STACKABLE skill-point-book skill sync failed " +
+                    $"cid={characterId}: {ex.Message}");
+            }
         }
 
         private async Task<bool> TryRejectExpiredStackableSourceAsync(

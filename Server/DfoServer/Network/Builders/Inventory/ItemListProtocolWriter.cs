@@ -31,7 +31,7 @@ namespace DfoServer.Network.Builders
                 throw new ArgumentOutOfRangeException(nameof(slot), slot, "NOTI2 装备槽位必须是 0-255。");
 
             writer.WriteByte((byte)slot);
-            writer.WriteInt32(core.ItemId);
+            writer.WriteInt32(SkillPointBookUseService.ResolveClientVisibleItemTemplateId(core));
             writer.WriteUInt32(unchecked((uint)ResolveNoti2Value(core, avatarDetail)));
             writer.WriteByte(core.Attr);
             writer.WriteUInt16(core.Durability);
@@ -155,7 +155,7 @@ namespace DfoServer.Network.Builders
                 throw new ArgumentNullException(nameof(core));
 
             writer.WriteInt16(slot);
-            writer.WriteInt32(core.ItemId);
+            writer.WriteInt32(SkillPointBookUseService.ResolveClientVisibleItemTemplateId(core));
             writer.WriteInt32(protocolValue);
             writer.WriteByte(core.Attr);
             writer.WriteUInt16(core.Durability);
