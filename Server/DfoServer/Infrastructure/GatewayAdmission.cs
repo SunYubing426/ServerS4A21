@@ -27,27 +27,22 @@ namespace DfoServer.Infrastructure
 
         public static void ConfigureFromEnvironment()
         {
-            Enabled = ResolveMode(
-                Environment.GetEnvironmentVariable("DFO_GATEWAY_MODE"),
-                Environment.GetEnvironmentVariable(
-                    "DFO_GATEWAY_ALLOW_LEGACY_LOGIN"));
-            if (!Enabled)
+            var gatewayMode = (Environment.GetEnvironmentVariable(
+                "DFO_GATEWAY_MODE") ?? "").Trim();
+            if (!string.Equals(gatewayMode, "1", StringComparison.Ordinal))
             {
-                FileLogger.Log(
-                    "[GatewayAdmission] WARNING legacy LOGIN explicitly enabled");
-                return;
+                throw new InvalidOperationException(
+                    "DFO_GATEWAY_MODE=1 is required. Direct LOGIN is disabled.");
             }
+            Enabled = true;
 
             _introspectUrl = (Environment.GetEnvironmentVariable("DFO_GATEWAY_INTROSPECT_URL") ?? "").Trim();
             var keyFile = (Environment.GetEnvironmentVariable(
                 "DFO_GATEWAY_INTERNAL_KEY_FILE") ?? "").Trim();
-            var legacyInlineKey = (Environment.GetEnvironmentVariable(
-                "DFO_GATEWAY_INTERNAL_KEY") ?? "").Trim();
             var caFile = (Environment.GetEnvironmentVariable(
                 "DFO_GATEWAY_INTROSPECT_CA_FILE") ?? "").Trim();
             if (!IsSafeIntrospectUrl(_introspectUrl)
-                || string.IsNullOrEmpty(keyFile)
-                || !string.IsNullOrEmpty(legacyInlineKey))
+                || string.IsNullOrEmpty(keyFile))
             {
                 throw new InvalidOperationException(
                     "DFO_GATEWAY_MODE=1 requires a safe DFO_GATEWAY_INTROSPECT_URL " +
@@ -69,31 +64,6 @@ namespace DfoServer.Infrastructure
             FileLogger.Log(
                 $"[GatewayAdmission] enabled introspect={_introspectUrl} " +
                 $"keyFile={_internalKeyFile}");
-        }
-
-        private static bool ResolveMode(
-            string gatewayModeValue,
-            string allowLegacyValue)
-        {
-            var gatewayMode = ParseSwitch(
-                "DFO_GATEWAY_MODE",
-                gatewayModeValue);
-            var allowLegacy = ParseSwitch(
-                "DFO_GATEWAY_ALLOW_LEGACY_LOGIN",
-                allowLegacyValue);
-            if (gatewayMode == true && allowLegacy == true)
-            {
-                throw new InvalidOperationException(
-                    "DFO_GATEWAY_MODE and DFO_GATEWAY_ALLOW_LEGACY_LOGIN cannot both be enabled.");
-            }
-            if (gatewayMode != true && allowLegacy != true)
-            {
-                throw new InvalidOperationException(
-                    "Explicit login admission mode required: set DFO_GATEWAY_MODE=1, " +
-                    "or set DFO_GATEWAY_ALLOW_LEGACY_LOGIN=1 for local development only.");
-            }
-
-            return gatewayMode == true;
         }
 
         public static async Task<(bool ok, string mid)> TryConsumeTicketAsync(string mid, string ticket)
@@ -157,18 +127,6 @@ namespace DfoServer.Infrastructure
             return string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase)
                 || IPAddress.TryParse(uri.Host, out var address)
                 && IPAddress.IsLoopback(address);
-        }
-
-        internal static bool IsClientAddressAllowed(
-            bool gatewayEnabled,
-            IPAddress remoteAddress)
-        {
-            if (gatewayEnabled || remoteAddress == null)
-                return gatewayEnabled;
-
-            if (remoteAddress.IsIPv4MappedToIPv6)
-                remoteAddress = remoteAddress.MapToIPv4();
-            return IPAddress.IsLoopback(remoteAddress);
         }
 
         private static string ReadInternalKeyFile(string path)
@@ -251,29 +209,6 @@ namespace DfoServer.Infrastructure
             {
                 Timeout = TimeSpan.FromSeconds(3)
             };
-        }
-
-        private static bool? ParseSwitch(string name, string value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-                return null;
-
-            switch (value.Trim().ToLowerInvariant())
-            {
-                case "1":
-                case "true":
-                case "yes":
-                case "on":
-                    return true;
-                case "0":
-                case "false":
-                case "no":
-                case "off":
-                    return false;
-                default:
-                    throw new InvalidOperationException(
-                        $"{name} must be a boolean switch.");
-            }
         }
 
         private sealed class IntrospectRequest

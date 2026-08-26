@@ -6,15 +6,12 @@ using DfoServer.Network.Builders;
 using DfoServer.Network.Builders.Auction;
 using DfoServer.Network.Parsers;
 using System;
-using System.Net;
 using System.Threading.Tasks;
 
 namespace DfoServer.Network.Handlers
 {
     public sealed class LoginHandler
     {
-        private const string DefaultLoginMid = "10038";
-
         private readonly IAccountRepository _accountRepository;
         private readonly ICharacterRepository _characterRepository;
         private readonly AccountSettingsRepository _settingsRepository;
@@ -66,38 +63,18 @@ namespace DfoServer.Network.Handlers
 
             try
             {
-                if (GatewayAdmission.Enabled)
+                if (session.Account != null)
                 {
-                    if (session.Account != null)
-                    {
-                        FileLogger.Log(
-                            $"[{ProtocolName}] GATEWAY LOGIN rejected: already bound account_id={session.Account.AccountId}");
-                        session.Close();
-                        return;
-                    }
-
-                    var admitted = await TryAdmitGatewayLoginAsync(session, body);
-                    if (!admitted.ok)
-                        return;
-                    BindAccount(session, admitted.mid, string.Empty);
+                    FileLogger.Log(
+                        $"[{ProtocolName}] GATEWAY LOGIN rejected: already bound account_id={session.Account.AccountId}");
+                    session.Close();
+                    return;
                 }
-                else
-                {
-                    var mId = DefaultLoginMid;
-                    var passwordHash = string.Empty;
-                    if (LoginRequestParser.TryParse(body, out var parsed))
-                    {
-                        mId = parsed.MId;
-                        passwordHash = parsed.PasswordHash ?? string.Empty;
-                        FileLogger.Log($"[{ProtocolName}] Login request parsed: m_id={mId} pwd_md5={passwordHash}");
-                    }
-                    else
-                    {
-                        FileLogger.Log($"[{ProtocolName}] Login body unparseable, falling back to m_id={DefaultLoginMid}");
-                    }
 
-                    BindAccount(session, mId, passwordHash);
-                }
+                var admitted = await TryAdmitGatewayLoginAsync(session, body);
+                if (!admitted.ok)
+                    return;
+                BindAccount(session, admitted.mid, string.Empty);
 
                 var account = session.Account;
                 if (account == null)
@@ -202,19 +179,6 @@ namespace DfoServer.Network.Handlers
             EnhancedClientSession session,
             string stage)
         {
-            var remoteAddress = (session?.TcpClient?.Client?.RemoteEndPoint
-                as IPEndPoint)?.Address;
-            if (!GatewayAdmission.IsClientAddressAllowed(
-                    GatewayAdmission.Enabled,
-                    remoteAddress))
-            {
-                FileLogger.Log(
-                    $"[{ProtocolName}] LEGACY LOGIN REJECTED: " +
-                    $"stage={stage} remote={remoteAddress}");
-                session?.Close();
-                return false;
-            }
-
             if (IsListenerAdmissionAllowed(
                     session.ListenerPort,
                     GameNetworkConfig.FreeDuelListenerEnabled))
