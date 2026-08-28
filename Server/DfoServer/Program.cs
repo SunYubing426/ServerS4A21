@@ -277,6 +277,7 @@ namespace DfoServer
             }
 
             server.Start(portConfigs);
+            Infrastructure.GatewayAdmin.Start(server);
 
             Game.Inventory.InventoryPersistenceService.RegisterClock(Infrastructure.ClockService.Instance);
             Infrastructure.ClockService.Instance.Start();
@@ -340,6 +341,7 @@ namespace DfoServer
                 }
             }
 
+            Infrastructure.GatewayAdmin.Stop();
             server.Stop();
             Game.Inventory.InventoryPersistenceService.SaveAllDirty();
             // 服务停止后不再产生常规业务日志，此时完成队列并等待后台写入结束，避免退出时丢失尾部日志。

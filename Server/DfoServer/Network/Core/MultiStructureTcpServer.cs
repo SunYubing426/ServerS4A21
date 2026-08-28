@@ -127,20 +127,28 @@ namespace DfoServer.Network
             }
             finally
             {
-                
-                lock (_clientsLock)
+                try { session.Close(); }
+                catch { }
+
+                try
                 {
-                    _clients.Remove(session.SessionId);
-                    _clientPorts.Remove(session.SessionId);
+                    if (_protocolHandlers.TryGetValue(port, out IProtocolHandler handler))
+                    {
+                        await handler.OnClientDisconnected(session);
+                    }
                 }
-
-                _packetProcessor.CleanupClient(session.SessionId);
-                session.Close();
-
-                
-                if (_protocolHandlers.TryGetValue(port, out IProtocolHandler handler))
+                catch (Exception ex)
                 {
-                    await handler.OnClientDisconnected(session);
+                    FileLogger.Log($"Error disconnecting client {session.SessionId} on port {port}: {ex.Message}");
+                }
+                finally
+                {
+                    lock (_clientsLock)
+                    {
+                        _clients.Remove(session.SessionId);
+                        _clientPorts.Remove(session.SessionId);
+                    }
+                    _packetProcessor.CleanupClient(session.SessionId);
                 }
             }
         }
@@ -174,6 +182,14 @@ namespace DfoServer.Network
         }
 
         
+        public IReadOnlyList<EnhancedClientSession> SnapshotClients()
+        {
+            lock (_clientsLock)
+            {
+                return new List<EnhancedClientSession>(_clients.Values);
+            }
+        }
+
         public ServerStatistics GetStatistics()
         {
             var stats = new ServerStatistics();
