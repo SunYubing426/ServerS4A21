@@ -7,11 +7,12 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using DfoServer.Game.Session;
 using DfoServer.Network;
 
 namespace DfoServer.Infrastructure
 {
-    /// 回环管理口：按 mid 或全员关闭游戏连接，下线路径会写背包和坐标。
+    /// 踢人与停服：关闭匹配连接后写档。
     public static class GatewayAdmin
     {
         public const int DefaultPort = 61004;
@@ -130,6 +131,12 @@ namespace DfoServer.Infrastructure
                     if (want.Length == 0 || !FixedEquals(key, want))
                     {
                         Write(stream, 401, "{\"ok\":false}");
+                        return;
+                    }
+
+                    if ((method == "GET" || method == "POST") && path == "/internal/v1/sessions")
+                    {
+                        Write(stream, 200, SessionListJSON());
                         return;
                     }
 
@@ -284,6 +291,92 @@ namespace DfoServer.Infrastructure
             return port > 0 && port < 65536;
         }
 
+        private static string SessionListJSON()
+        {
+            var mids = new List<string>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var rows = new List<SessionRow>();
+            var clients = _server != null
+                ? _server.SnapshotClients()
+                : (IReadOnlyList<EnhancedClientSession>)new EnhancedClientSession[0];
+            foreach (var session in clients)
+            {
+                var row = Describe(session);
+                if (row == null)
+                    continue;
+                rows.Add(row);
+                if (seen.Add(row.Mid))
+                    mids.Add(row.Mid);
+            }
+            return JsonSerializer.Serialize(new SessionListReply
+            {
+                Ok = true,
+                Mids = mids,
+                Connections = rows.Count,
+                Sessions = rows
+            }, JsonOptions);
+        }
+
+        private static SessionRow Describe(EnhancedClientSession session)
+        {
+            var mid = (session?.Account?.MId ?? "").Trim();
+            if (mid.Length == 0)
+                return null;
+
+            var player = session.Player;
+            var run = player?.CurrentRun;
+            var channel = 0;
+            if (GameNetworkConfig.TryResolveGameChannel(session.ListenerPort, out var ch))
+                channel = ch.ChannelId;
+
+            var place = "login";
+            var dungeonId = 0;
+            var difficulty = 0;
+            if (run != null && run.DungeonId != 0)
+            {
+                place = "dungeon";
+                dungeonId = run.DungeonId;
+                difficulty = run.Difficulty;
+            }
+            else if (player != null && player.UserState == 0x02)
+            {
+                place = "pvp";
+            }
+            else if (player != null && player.CharacterId > 0)
+            {
+                place = "town";
+            }
+
+            return new SessionRow
+            {
+                Mid = mid,
+                CharacterId = player?.CharacterId ?? 0,
+                Character = ReadName(player),
+                Level = player?.Level ?? 0,
+                Job = player?.Job ?? 0,
+                Channel = channel,
+                Place = place,
+                TownId = player?.CurTownId ?? 0,
+                AreaId = player?.CurAreaId ?? 0,
+                DungeonId = dungeonId,
+                Difficulty = difficulty
+            };
+        }
+
+        private static string ReadName(PlayerContext player)
+        {
+            if (player?.Name == null || player.Name.Length == 0)
+                return "";
+            try
+            {
+                return ClientTextEncoding.GetString(player.Name).Trim();
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
         private static void WaitUntilDrained(TimeSpan limit)
         {
             var deadline = DateTime.UtcNow + limit;
@@ -328,6 +421,29 @@ namespace DfoServer.Infrastructure
         {
             public string Mid { get; set; }
             public bool All { get; set; }
+        }
+
+        private sealed class SessionListReply
+        {
+            public bool Ok { get; set; }
+            public List<string> Mids { get; set; }
+            public int Connections { get; set; }
+            public List<SessionRow> Sessions { get; set; }
+        }
+
+        private sealed class SessionRow
+        {
+            public string Mid { get; set; }
+            public int CharacterId { get; set; }
+            public string Character { get; set; }
+            public int Level { get; set; }
+            public int Job { get; set; }
+            public int Channel { get; set; }
+            public string Place { get; set; }
+            public int TownId { get; set; }
+            public int AreaId { get; set; }
+            public int DungeonId { get; set; }
+            public int Difficulty { get; set; }
         }
     }
 }
