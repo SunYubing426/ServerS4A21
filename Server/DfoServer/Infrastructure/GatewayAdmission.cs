@@ -21,18 +21,34 @@ namespace DfoServer.Infrastructure
         };
 
         public static bool Enabled { get; private set; }
+        public static bool DirectLoginDevEnabled { get; private set; }
 
         private static string _introspectUrl = "";
         private static string _internalKeyFile = "";
 
         public static void ConfigureFromEnvironment()
         {
+            Enabled = false;
+            DirectLoginDevEnabled = false;
+            _introspectUrl = "";
+            _internalKeyFile = "";
+
+            var directLoginDev = (Environment.GetEnvironmentVariable(
+                "DFO_DIRECT_LOGIN_DEV") ?? "").Trim();
+            if (string.Equals(directLoginDev, "1", StringComparison.Ordinal))
+            {
+                DirectLoginDevEnabled = true;
+                FileLogger.Log("[GatewayAdmission] direct LOGIN dev mode enabled");
+                return;
+            }
+
             var gatewayMode = (Environment.GetEnvironmentVariable(
                 "DFO_GATEWAY_MODE") ?? "").Trim();
             if (!string.Equals(gatewayMode, "1", StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
-                    "DFO_GATEWAY_MODE=1 is required. Direct LOGIN is disabled.");
+                    "DFO_GATEWAY_MODE=1 is required. Direct LOGIN is disabled " +
+                    "unless DFO_DIRECT_LOGIN_DEV=1 is set for local debugging.");
             }
             Enabled = true;
 

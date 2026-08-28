@@ -66,15 +66,32 @@ namespace DfoServer.Network.Handlers
                 if (session.Account != null)
                 {
                     FileLogger.Log(
-                        $"[{ProtocolName}] GATEWAY LOGIN rejected: already bound account_id={session.Account.AccountId}");
+                        $"[{ProtocolName}] LOGIN rejected: already bound account_id={session.Account.AccountId}");
                     session.Close();
                     return;
                 }
 
-                var admitted = await TryAdmitGatewayLoginAsync(session, body);
-                if (!admitted.ok)
+                if (GatewayAdmission.Enabled)
+                {
+                    var admitted = await TryAdmitGatewayLoginAsync(session, body);
+                    if (!admitted.ok)
+                        return;
+                    BindAccount(session, admitted.mid, string.Empty);
+                }
+                else if (GatewayAdmission.DirectLoginDevEnabled)
+                {
+                    var admitted = TryAdmitDirectLoginDev(session, body);
+                    if (!admitted.ok)
+                        return;
+                    BindAccount(session, admitted.mid, admitted.passwordHash);
+                }
+                else
+                {
+                    FileLogger.Log(
+                        $"[{ProtocolName}] LOGIN rejected: gateway admission disabled");
+                    session.Close();
                     return;
-                BindAccount(session, admitted.mid, string.Empty);
+                }
 
                 var account = session.Account;
                 if (account == null)
@@ -156,6 +173,30 @@ namespace DfoServer.Network.Handlers
 
             FileLogger.Log($"[{ProtocolName}] GATEWAY LOGIN ticket ok mid={consumed.mid}");
             return (true, consumed.mid);
+        }
+
+        private (bool ok, string mid, string passwordHash) TryAdmitDirectLoginDev(
+            EnhancedClientSession session,
+            byte[] body)
+        {
+            if (!LoginRequestParser.TryParse(body, out var parsed)
+                || string.IsNullOrEmpty(parsed.MId))
+            {
+                FileLogger.Log($"[{ProtocolName}] DIRECT LOGIN dev rejected: unparseable");
+                session.Close();
+                return (false, "", "");
+            }
+
+            var claimed = parsed.MId.Trim();
+            if (claimed.Length == 0)
+            {
+                FileLogger.Log($"[{ProtocolName}] DIRECT LOGIN dev rejected: empty mid");
+                session.Close();
+                return (false, "", "");
+            }
+
+            FileLogger.Log($"[{ProtocolName}] DIRECT LOGIN dev accepted mid={claimed}");
+            return (true, claimed, parsed.PasswordHash ?? string.Empty);
         }
 
         private void BindAccount(

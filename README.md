@@ -89,6 +89,8 @@ dotnet build Server/DfoServer.sln -c Debug
    - **源码仓库**：`./start-server.sh` / `start-server.bat`（会自动查找 `dist/<平台>/` 或 Debug 构建）
 3. 服务端监听 7001 (Channel) + 10011 (Game) 端口
 
+本地直连调试时可临时设置 `DFO_DIRECT_LOGIN_DEV=1`，绕过网关 ticket 校验；默认未设置时仍要求 `DFO_GATEWAY_MODE=1` 并走网关准入。
+
 ## 数据库
 
 项目不再附带或发布 SQLite 种子库。服务端启动时检查 `Data/inventory.db`：
