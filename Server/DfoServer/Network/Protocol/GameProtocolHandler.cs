@@ -211,6 +211,18 @@ namespace DfoServer.Network
             _pvpRoomHandler = socialHandlers.PvpRoom;
             _characterSessionLifecycle = characterSessionLifecycle;
 
+            // ★0x2A 放弃回城后提交离队并通知留守成员重建名册(最小移植自 MR !22)。
+            // 之前 ConfigureDungeonGiveupPartyDeparture 从未被调用, 导致放弃者回城后仍留在队伍里,
+            // 队长界面残留已退成员。(2026-08-30 修复)
+            _townHandler.ConfigureDungeonGiveupPartyDeparture(
+                _partyHandler.HandleDungeonGiveupDepartureAsync);
+
+            // ★死亡回城后提交离队并通知留守成员重建名册。
+            // 之前 ConfigureDeathRespawnPartyDeparture 从未被调用, 导致死亡回城者仍留在队伍里,
+            // 队长界面残留已回城成员。(2026-08-30 修复)
+            _dungeonHandler.ConfigureDeathRespawnPartyDeparture(
+                _partyHandler.HandleDungeonGiveupDepartureAsync);
+
             _cmdDispatch = new GameCommandRegistry();
             _cmdDispatch.RegisterGroup("login", RegisterLoginHandlers);
             _cmdDispatch.RegisterGroup("character", RegisterCharacterHandlers);

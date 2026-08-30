@@ -28,6 +28,16 @@ namespace DfoServer.Network.Handlers.Dungeon
         private readonly DungeonSettlementHandler _settlement;
         private readonly DungeonKillApplicationService _kills;
         private readonly TournamentDungeonCoordinator _tournament;
+        // 死亡回城后离队钩子: 回城成功后由 PartyHandler 提交离队并通知留守成员重建名册。
+        // 不接时死亡回城者仍留在队伍里, 队长界面残留已回城成员。(2026-08-30 修复)
+        private Func<EnhancedClientSession, ushort, Guid, int, Task>
+            _deathRespawnPartyDeparture;
+
+        internal void ConfigureDeathRespawnPartyDeparture(
+            Func<EnhancedClientSession, ushort, Guid, int, Task> handler)
+        {
+            _deathRespawnPartyDeparture = handler;
+        }
 
         internal DungeonCombatHandler(
             DungeonSharedServices svc,
@@ -497,6 +507,22 @@ namespace DfoServer.Network.Handlers.Dungeon
             }
 
             DungeonRunLifecycle.CancelDeathRespawn(session);
+
+            // ★死亡回城后离队: 回城前快照队伍归属, 回城成功后经 PartyHandler 钩子提交本人离队
+            //   —— 否则留守成员的队伍窗口里, 死亡回城者会残留成"还在副本"。(2026-08-30 修复)
+            var deathExpectedUserId = session?.Player?.UserId ?? (ushort)0;
+            var deathExpectedSessionId = session?.SessionId ?? Guid.Empty;
+            var deathExpectedPartyId = 0;
+            if (deathExpectedUserId != 0 && _svc.PartyManager != null)
+            {
+                var deathLiveParty = _svc.PartyManager.GetPartyByUser(deathExpectedUserId);
+                var deathMember = deathLiveParty?.GetMember(deathExpectedUserId);
+                if (deathLiveParty != null
+                    && deathLiveParty.Count > 1
+                    && deathMember?.SessionId == deathExpectedSessionId)
+                    deathExpectedPartyId = deathLiveParty.PartyId;
+            }
+
             if (!await DungeonRunLifecycle.EndRunAsync(
                     session,
                     DungeonRunEndReason.DeathRespawn,
@@ -549,6 +575,23 @@ namespace DfoServer.Network.Handlers.Dungeon
                 return;
 
             FileLogger.Log($"[{DungeonSharedServices.ProtocolLogName}] DEATH_RESPAWN: complete source={source}");
+
+            // ★死亡回城完成后提交离队(与 0x2A 放弃回城同逻辑)。
+            if (_deathRespawnPartyDeparture != null && deathExpectedPartyId > 0)
+            {
+                try
+                {
+                    await _deathRespawnPartyDeparture(
+                        session,
+                        deathExpectedUserId,
+                        deathExpectedSessionId,
+                        deathExpectedPartyId);
+                }
+                catch (Exception ex)
+                {
+                    FileLogger.Log($"[{DungeonSharedServices.ProtocolLogName}] post-death-respawn party departure failed: cid={session.Player?.CharacterId ?? 0} error={ex.Message}");
+                }
+            }
         }
 
         private static bool IsDeathRespawnTimerCurrent(

@@ -287,5 +287,10 @@ namespace DfoServer.Network.Handlers
         internal void ConfigureTownPresenceProjection(
             Func<EnhancedClientSession, Game.Dungeon.DungeonRunIdentity, Task> projection)
             => _services.TownReturn.ConfigureTownPresenceProjection(projection);
+
+        // 死亡回城后离队钩子注入点, 由 GameProtocolHandler 在构造时接线。
+        internal void ConfigureDeathRespawnPartyDeparture(
+            Func<EnhancedClientSession, ushort, Guid, int, Task> handler)
+            => _combat.ConfigureDeathRespawnPartyDeparture(handler);
     }
 }
