@@ -27,6 +27,17 @@ namespace DfoServer.SelfTests
                 && CharacterSelectHandler.IsSupportedA21CreateJob(12),
                 ref failures);
 
+            var demonicLancerCapsule = ExperienceItemDataProvider.Resolve(2683667);
+            Check(
+                "A21 growth capsule supports demonic lancer job 13",
+                demonicLancerCapsule.IsSupported
+                && demonicLancerCapsule.GrantKind
+                    == ExperienceItemGrantKind.Percent
+                && demonicLancerCapsule.Value == 10
+                && demonicLancerCapsule.MaximumLevel == 84
+                && demonicLancerCapsule.IsUsableByJob(13),
+                ref failures);
+
             Check(
                 "A21 maps the PVF weapon token to equipment slot 12",
                 InitialCharacterEquipment.TryGetSlotForPvfToken("[weapon]", out var weaponSlot)
