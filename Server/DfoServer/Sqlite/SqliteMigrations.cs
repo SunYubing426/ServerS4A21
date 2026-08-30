@@ -37,6 +37,9 @@ namespace DfoServer.Sqlite
                 new MigrationStep(12, "compress_character_slot_holes", ApplyCompressCharacterSlotHoles),
                 new MigrationStep(13, "add_dungeon_entry_limits", ApplyDungeonEntryLimits),
                 new MigrationStep(14, "remove_dungeon_limit_noti2_entry_flag", ApplyRemoveDungeonLimitNoti2EntryFlag),
+                // 15: 远古精灵秘药 [exp bonus rate] 效果持久化表（IF NOT EXISTS 幂等，
+                // 新库由 item_schema.sql 已建，此处自动跳过）。
+                new MigrationStep(15, "add_character_experience_bonus_effects", ApplyCharacterExperienceBonusEffects),
             };
 
         internal static int CurrentVersion =>
@@ -892,6 +895,20 @@ INSERT OR IGNORE INTO dungeon_limit_config (
     (4127, 'charac', 1, 1, 23),
     (4128, 'charac', 1, 1, 24),
     (4123, 'charac', 3, 1, 25);");
+        }
+
+        private static void ApplyCharacterExperienceBonusEffects(
+            SqliteConnection connection,
+            SqliteTransaction transaction)
+        {
+            ExecuteSql(connection, transaction, @"
+CREATE TABLE IF NOT EXISTS character_experience_bonus_effects (
+    character_id INTEGER PRIMARY KEY,
+    source_item_id INTEGER NOT NULL,
+    bonus_rate INTEGER NOT NULL CHECK (bonus_rate > 0),
+    expires_at INTEGER NOT NULL CHECK (expires_at > 0),
+    FOREIGN KEY (character_id) REFERENCES characters(character_id) ON DELETE CASCADE
+);");
         }
 
         private static void ImportCharacterNewItems(
