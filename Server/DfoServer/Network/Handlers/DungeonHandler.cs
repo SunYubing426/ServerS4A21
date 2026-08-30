@@ -275,5 +275,11 @@ namespace DfoServer.Network.Handlers
 
             return session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(0x01, 0x01DE, CommonPacketBodyBuilder.BuildSuccessAck()));
         }
+
+        // 城镇同屏投影钩子注入点(最小移植自 MR !22), 由
+        // GameProtocolTownDungeonHandlers 在构造时接线。
+        internal void ConfigureTownPresenceProjection(
+            Func<EnhancedClientSession, Game.Dungeon.DungeonRunIdentity, Task> projection)
+            => _services.TownReturn.ConfigureTownPresenceProjection(projection);
     }
 }

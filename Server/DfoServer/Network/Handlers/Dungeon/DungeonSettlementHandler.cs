@@ -1611,7 +1611,10 @@ namespace DfoServer.Network.Handlers.Dungeon
                 return;
             }
             if (shouldReturnToTown)
+            {
                 await ReturnToVillage(session, runIdentity);
+                await FanOutPartySettlementReturnAsync(session, run, body);
+            }
         }
 
         internal async Task HandleCardStartRequest(EnhancedClientSession session, GamePacketHeader header, byte[] body)
@@ -2485,6 +2488,67 @@ namespace DfoServer.Network.Handlers.Dungeon
             DungeonRunIdentity runIdentity)
         {
             await _svc.TownReturn.ReturnAsync(session, runIdentity);
+        }
+
+        // ★结算回城全队跟随退出(参考 MR !22 共享副本生命周期的最小移植):
+        //   队长在结算界面选择返回城镇后, 同队伍+同副本实例、仍在副本内的在线队员,
+        //   先补发结算退出包(0x0048)关闭其结算窗, 再复用队长同款回城序列拉回城镇。
+        //   非队长触发的结算回城不 fan-out。
+        private async Task FanOutPartySettlementReturnAsync(
+            EnhancedClientSession leader,
+            DungeonRun leaderRun,
+            byte[] body)
+        {
+            if (Environment.GetEnvironmentVariable("DFO_PARTY_DUNGEON_COOP") == "0") return;
+            if (_svc.PartyManager == null || _svc.Sessions == null || leader?.Player == null || leaderRun == null)
+                return;
+
+            var leaderUid = leader.Player.UserId;
+            var party = _svc.PartyManager.GetPartyByUser(leaderUid);
+            if (party == null || party.Count <= 1 || !party.IsLeader(leaderUid)) return;
+
+            // ★队员应答固定 state=1, option=2(退出→回城), 不转发队长选项:
+            //   转发 option=0(继续挑战)/1(选择其他地下城)会让队员客户端进入"等待选图/进图"
+            //   悬空态——队长真进图时被进本扇出(要求队员 CurrentRun==null)救回,
+            //   但队长在选图界面按返回时无人发包, 队员永久卡加载(场景3实测)。
+            //   固定回城语义复刻场景1已验证的包流; 队长后续选图进图仍由进本扇出拖带。
+            //   (对应 MR !22: follower 无法整体跟随选图时降级为回城)
+            const byte state = 1;
+            const byte option = 2;
+            var exitSender = new CardRewardNotificationSender();
+
+            FileLogger.Log(
+                $"[DungeonHandler] PARTY_SETTLEMENT_RETURN: " +
+                $"leader={leader.Player.CharacterId} party={party.PartyId} " +
+                $"instance={leaderRun.PartyDungeonInstanceId} members={party.Count} → fan-out 跟随退出");
+
+            foreach (var m in party.MembersBySlot())
+            {
+                if (m.UserId == leaderUid) continue;
+                if (!_svc.Sessions.TryGet(m.CharacterId, out var bs)) continue;
+                if (bs?.Player == null || bs.TcpClient == null || !bs.TcpClient.Connected) continue;
+                var memberRun = bs.Player.CurrentRun;
+                if (memberRun == null
+                    || memberRun.PartyDungeonInstanceId != leaderRun.PartyDungeonInstanceId)
+                {
+                    continue;
+                }
+                var memberIdentity = memberRun.CaptureIdentity();
+                try
+                {
+                    await exitSender.SendExitAsync(bs, state, option);
+                    var ok = await _svc.TownReturn.ReturnAsync(bs, memberIdentity);
+                    FileLogger.Log(
+                        $"[DungeonHandler] PARTY_SETTLEMENT_RETURN: " +
+                        $"member cid={bs.Player.CharacterId} 跟随退出→城镇 result={ok}");
+                }
+                catch (Exception ex)
+                {
+                    FileLogger.Log(
+                        $"[DungeonHandler] PARTY_SETTLEMENT_RETURN: " +
+                        $"member uid={m.UserId} 跟随异常: {ex.Message}");
+                }
+            }
         }
 
         private bool EnsureDungeonPermissionPlan(
