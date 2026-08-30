@@ -793,6 +793,9 @@ namespace DfoServer.Network.Handlers
                         $"[{ProtocolName}] RETURN_TO_TOWN from selection: " +
                         $"type=0x{header.type:X4} cid={session.Player.CharacterId} " +
                         $"selection={selection.SelectionId}");
+
+                    // ★队长从选图界面返回城镇时, 把同队在线队员也拉回城镇。
+                    await TryFanOutPartyReturnFromSelectionAsync(session, header.type);
                 }
                 catch
                 {
@@ -1173,10 +1176,69 @@ namespace DfoServer.Network.Handlers
                && player.UserState == 0x00;
 
         /// <summary>
+        /// 队长从选图界面返回城镇时, 把同队所有在线队员也拉回城镇。
+        /// 与 TryFanOutPartyEnterSelectDungeonAsync 配对使用。
+        /// </summary>
+        public async Task TryFanOutPartyReturnFromSelectionAsync(
+            EnhancedClientSession leader,
+            ushort responsePacketType)
+        {
+            if (Environment.GetEnvironmentVariable("DFO_PARTY_DUNGEON_COOP") == "0") return;
+            if (_partyManager == null || _sessions == null || leader?.Player == null) return;
+        
+            var leaderUid = (ushort)leader.Player.CharacterId;
+            var party = _partyManager.GetPartyByUser(leaderUid);
+            if (party == null || party.Count <= 1 || !party.IsLeader(leaderUid)) return;
+        
+            FileLogger.Log($"[{ProtocolName}] PARTY_RETURN_FROM_SELECTION_FANOUT: leader={leader.Player.CharacterId} party={party.PartyId} members={party.Count} → returning members to town");
+            foreach (var m in party.MembersBySlot())
+            {
+                if (m.UserId == leaderUid) continue;
+                var found = _sessions.TryGet(m.CharacterId, out var bs);
+                if (!found || bs?.Player == null || bs.TcpClient == null || !bs.TcpClient.Connected)
+                {
+                    FileLogger.Log($"[{ProtocolName}] PARTY_RETURN_FROM_SELECTION_FANOUT: member uid={m.UserId} offline, skip");
+                    continue;
+                }
+                var memberSelection = bs.Player.CurrentDungeonSelection;
+                if (memberSelection == null)
+                {
+                    FileLogger.Log($"[{ProtocolName}] PARTY_RETURN_FROM_SELECTION_FANOUT: member uid={m.UserId} not in selection, skip");
+                    continue;
+                }
+                if (!memberSelection.TryBeginReturn())
+                {
+                    FileLogger.Log($"[{ProtocolName}] PARTY_RETURN_FROM_SELECTION_FANOUT: member uid={m.UserId} return already in progress, skip");
+                    continue;
+                }
+                var memberGuard = TownProjectionGuard.ForSelection(memberSelection);
+                try
+                {
+                    if (!await ReturnSelectionToTownAsync(bs, memberSelection, memberGuard, responsePacketType))
+                    {
+                        memberSelection.CancelReturn();
+                        FileLogger.Log($"[{ProtocolName}] PARTY_RETURN_FROM_SELECTION_FANOUT: member uid={m.UserId} ReturnSelectionToTownAsync failed");
+                        continue;
+                    }
+                    await SendTownAccountStateAsync(bs, "party-return-from-selection-fanout", memberGuard);
+                    if (CanContinueTownProjection(bs, memberGuard))
+                        bs.Player.CompleteDungeonSelection(memberSelection);
+                    FileLogger.Log($"[{ProtocolName}] PARTY_RETURN_FROM_SELECTION_FANOUT: member cid={bs.Player.CharacterId} → town");
+                }
+                catch (Exception ex)
+                {
+                    if (bs.Player.IsCurrentDungeonSelection(memberSelection))
+                        memberSelection.CancelReturn();
+                    FileLogger.Log($"[{ProtocolName}] PARTY_RETURN_FROM_SELECTION_FANOUT: member uid={m.UserId} exception: {ex.Message}");
+                }
+            }
+        }
+        
+        /// <summary>
         /// 队长从城镇打开选图界面(0x000F)时, 把同队所有在线队员也拉进选图界面。
-        /// 移植自旧服务端(86JP-main) TownHandler.cs 第1347-1390行。
+        /// 移植自旧服务端(86JP-main) TownHandler.cs 第1347-1390行, 由号佬(今天几号啊?)适配到新服务端。
         /// 关键: 队员必须在队长打开选图界面的同时进入选图界面, 否则等到队长选择具体副本(0x0010)
-        /// 时才给队员发ENTER_SELECT_DUNGEON包, 队员客户端会弹出“召集快速组队”弹窗。
+        /// 时才给队员发ENTER_SELECT_DUNGEON包, 队员客户端会弹出"召集快速组队"弹窗。
         /// </summary>
         public async Task TryFanOutPartyEnterSelectDungeonAsync(
             EnhancedClientSession leader,

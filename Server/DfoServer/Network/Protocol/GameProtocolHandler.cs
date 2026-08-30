@@ -652,7 +652,7 @@ namespace DfoServer.Network
         /// <summary>
         /// Wraps ENTER_SELECT_DUNGEON (0x000F). 队长从城镇打开选图界面时,
         /// 立即把同队所有在线队员也拉进选图界面, 避免队员弹出“召集快速组队”弹窗。
-        /// 移植自旧服务端(86JP-main) GameProtocolHandler.cs。
+        /// 移植自旧服务端(86JP-main) GameProtocolHandler.cs, 由号佬(今天几号啊?)适配到新服务端。
         /// </summary>
         private async Task HandleRaidAwareEnterSelectDungeon(
             EnhancedClientSession session,
