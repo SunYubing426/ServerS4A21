@@ -66,7 +66,7 @@ namespace DfoServer.Network.Handlers
             _announceTownArrivalWithinTransition =
                 announceTownArrivalWithinTransition;
             // 断线清理走会话目录的生命周期事件: 断线者自动退队, 剩余成员收到名册刷新。
-            // 不订阅就会产生幽灵队员(断线者永久留在名册里)。事件在 session 从目录移除前触发,
+            // 不订阅就会导致名册残留(断线者永久留在名册里)。事件在 session 从目录移除前触发,
             // 只向【剩余成员】发包, 绝不向垂死会话本身发(其 socket 已在关闭流程中)。
             if (_sessions != null)
                 _sessions.SessionEnding += OnSessionEndingAsync;
@@ -240,6 +240,9 @@ namespace DfoServer.Network.Handlers
             {
                 if (committedParty != null)
                     await CloseRelayRoomAsync(committedParty.PartyId);
+                // 人数不足 2 触发的解散: 给留守成员逐个发 PARTY_INFO type=3 清窗。
+                // 客户端没有单人队伍包(0x09/0x99/0x0B)的处理路径, 解散通知是唯一安全出口。
+                await SendDisbandClearToRemainingAsync(result, reason);
                 return;
             }
 
@@ -334,7 +337,164 @@ namespace DfoServer.Network.Handlers
                 return;
             }
 
+            // 减员刷新决策:
+            // 城镇 = 退役旧代际 + 新 partyId formation 广播(唯一对原版客户端安全的重建原语)。
+            // 副本内 = 同 partyId 直接广播 type=0 名册:
+            //   客户端补丁新 GameGaurd.dll 已修复 A21 名册解析器减员(slot-diff)路径的崩溃,
+            //   实测 3 人图内退队全流程无闪退, 故实时下发, 留守者立即看到减员。
+            // 注意: 未打补丁的旧 DLL 客户端收到此包仍会崩。
+            var survivors =
+                _partyManager.GetPartySnapshot(replacementPartyId);
+            if (survivors == null)
+                return;
+            if (AnyMemberInDungeon(survivors))
+            {
+                FileLogger.Log(
+                    $"[{ProtocolName}] PARTY shrink live broadcast in " +
+                    $"dungeon: party={replacementPartyId} " +
+                    $"reason={reason}");
+                await BroadcastPartyInfo(replacementPartyId);
+                return;
+            }
+
+            var wireRebuild =
+                _partyManager.RebuildWireGeneration(replacementPartyId);
+            if (wireRebuild?.Ok == true && wireRebuild.RetiredParty != null)
+            {
+                await PublishCommittedDepartureAsync(
+                    wireRebuild,
+                    $"{reason} wire-rebuild");
+                return;
+            }
+
             await BroadcastPartyInfo(replacementPartyId);
+        }
+
+        // 队伍快照中是否有成员仍在副本实例内(以会话 CurrentRun 判定)。
+        private bool AnyMemberInDungeon(Party party)
+        {
+            if (_sessions == null || party == null)
+                return false;
+            foreach (var member in party.MembersBySlot())
+            {
+                if (_sessions.TryGet(
+                        member.CharacterId,
+                        out var session) &&
+                    session.SessionId == member.SessionId &&
+                    session.Player?.CurrentRun != null)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // 结算/回城完成后调用: 队伍曾在副本内减员且未刷新客户端名册(抑制窗口),
+        // 此刻全员已回城则用新 partyId 重建并发布(旧代 type=3 + formation)。
+        public async Task RefreshSuppressedPartyWireAsync(
+            int partyId,
+            string reason)
+        {
+            if (_sessions == null || partyId <= 0)
+                return;
+
+            var party = _partyManager.GetPartySnapshot(partyId);
+            if (party == null ||
+                party.Count < 2 ||
+                !party.WireRefreshSuppressed ||
+                AnyMemberInDungeon(party))
+            {
+                return;
+            }
+
+            _partyManager.SetWireRefreshSuppressed(partyId, false);
+            var wireRebuild = _partyManager.RebuildWireGeneration(partyId);
+            if (wireRebuild?.Ok == true && wireRebuild.RetiredParty != null)
+            {
+                FileLogger.Log(
+                    $"[{ProtocolName}] PARTY suppressed wire rebuild: " +
+                    $"oldParty={partyId} newParty=" +
+                    $"{wireRebuild.Party.PartyId} reason={reason}");
+                await PublishCommittedDepartureAsync(
+                    wireRebuild,
+                    $"{reason} wire-refresh");
+                return;
+            }
+
+            // 重建失败(如队长瞬时离线): 回置标记, 下次回城再试。
+            _partyManager.SetWireRefreshSuppressed(partyId, true);
+            FileLogger.Log(
+                $"[{ProtocolName}] PARTY suppressed wire rebuild failed: " +
+                $"party={partyId} reason={reason} " +
+                $"result={wireRebuild?.Reason ?? "null"}");
+        }
+
+        // 副本回城钩子(由 TownHandler 在每位成员回城完成后回调):
+        // 解析会话所属队伍并尝试名册延迟重建(全员回城才生效, 幂等)。
+        public async Task NotifyPartyWireTownReturnAsync(
+            EnhancedClientSession session)
+        {
+            if (_partyManager == null || session?.Player == null)
+                return;
+
+            var uid = session.Player.UserId;
+            var party = _partyManager.GetPartyByUser(uid);
+            if (party == null || party.Count < 2)
+                return;
+
+            try
+            {
+                await RefreshSuppressedPartyWireAsync(
+                    party.PartyId,
+                    $"town-return uid={uid}");
+            }
+            catch (Exception ex)
+            {
+                FileLogger.Log(
+                    $"[{ProtocolName}] town-return wire refresh failed: " +
+                    $"uid={uid} party={party.PartyId} error={ex.Message}");
+            }
+        }
+
+        // 队伍因人数不足 2 解散后, 给仍在线的留守成员发 PARTY_INFO type=3 清队伍窗口。
+        // (单人名册/实时/端点包客户端均无处理路径, 收到即进程退出, 2026-08-27 实机取证。)
+        private async Task SendDisbandClearToRemainingAsync(
+            PartyOpResult result,
+            string reason)
+        {
+            if (_sessions == null ||
+                result?.RemainingMembers == null ||
+                result.RemainingMembers.Count == 0 ||
+                result.Party == null)
+            {
+                return;
+            }
+
+            var packet = GamePacketEnvelopeBuilder.Build(
+                0x00,
+                0x0009,
+                PartyInfoNotiBuilder.Build(result.Party, 3));
+            var tasks = new List<Task>();
+            foreach (var member in result.RemainingMembers)
+            {
+                if (!_sessions.TryGet(
+                        member.CharacterId,
+                        out var survivor) ||
+                    survivor.SessionId != member.SessionId ||
+                    survivor.TcpClient == null)
+                {
+                    continue;
+                }
+
+                tasks.Add(
+                    Game.Session.SessionDirectory.TrySendBestEffortAsync(
+                        cancellationToken =>
+                            survivor.SendPacketAsync(
+                                packet, cancellationToken),
+                        $"{reason} disband-clear uid={member.UserId}"));
+            }
+            if (tasks.Count > 0)
+                await Task.WhenAll(tasks);
         }
 
         private PartyMember BuildMember(EnhancedClientSession session, int cid)
@@ -464,15 +624,21 @@ namespace DfoServer.Network.Handlers
                                 _partyManager.CreateParty(member);
                             party = createdResult.Party;
                         }
-                        party.TitleIndex = 0;
+                        party.TitleIndex = req.TitleIndex;
                         party.TitleBytes =
                             (req.Title != null &&
                              req.Title.Length > 0)
                                 ? req.Title
                                 : leaderName;
-                        party.UserMax = 4;
+                        party.UserMax =
+                            (req.UserMax >= 1 && req.UserMax <= PartyConstants.MaxMembers)
+                                ? req.UserMax
+                                : (byte)4;
                         party.DungIndex = 0;
                         party.DungDiffi = 0;
+                        // A21 PARTY_INFO(type 0/1) echoes this 12B settings block
+                        // (MR !22 wire fix); captured from SET_PARTY_INFO.
+                        party.PartyInfoBlock = req.Raw;
                     }))
             {
                 return;
@@ -590,6 +756,67 @@ namespace DfoServer.Network.Handlers
                     $"dungeon-leader-giveup uid={uid}");
             }
             FileLogger.Log($"[{ProtocolName}] DUNGEON_LEADER_GIVEUP uid={uid} leftParty={partyId} newLeader={result.NewLeaderUserId} remaining=[{string.Join(",", result.RemainingMembers.Select(m => m.UserId))}]");
+        }
+
+        // ★任意成员副本内中途放弃(0x2A)后的离队提交(最小移植自 MR !22):
+        // 放弃者已由 TownHandler 拉回城; 这里把他移出队伍并通知留守成员 ——
+        // 否则留守成员的队伍窗口/副本联机投影里, 放弃者残留成"还在副本"。
+        // 身份快照(队伍/会话)不匹配时安全跳过, 避免误伤重登后的新队伍。
+        // 2 人队剩 1 人时 Leave 按官方语义直接解散, 留守者收 type=3 清窗。
+        public async Task HandleDungeonGiveupDepartureAsync(
+            EnhancedClientSession session,
+            ushort expectedUserId,
+            Guid expectedSessionId,
+            int expectedPartyId)
+        {
+            if (expectedUserId == 0 || expectedPartyId <= 0)
+                return;
+
+            var party = _partyManager.GetPartyByUser(expectedUserId);
+            var member = party?.GetMember(expectedUserId);
+            if (party == null
+                || party.PartyId != expectedPartyId
+                || party.Count <= 1
+                || member == null
+                || member.SessionId != expectedSessionId)
+            {
+                FileLogger.Log($"[{ProtocolName}] DUNGEON_GIVEUP departure skip uid={expectedUserId} party={(party?.PartyId ?? -1)} count={(party?.Count ?? 0)} expectedParty={expectedPartyId}");
+                return;
+            }
+
+            PartyOpResult result = null;
+            if (!await RunCurrentPartyMutationAsync(
+                    session,
+                    () =>
+                    {
+                        result = _partyManager.Leave(
+                            expectedUserId, expectedSessionId);
+                    }))
+            {
+                return;
+            }
+            if (!result.Ok)
+            {
+                FileLogger.Log($"[{ProtocolName}] DUNGEON_GIVEUP departure failed uid={expectedUserId} party={expectedPartyId} reason={result.Reason}");
+                return;
+            }
+
+            try
+            {
+                // 给【放弃者本人】发 PARTY_INFO type=3 清窗 —— 本客户端不自己清。
+                await SendPartyClearBestEffortAsync(
+                    session,
+                    GetDepartureClearParty(result),
+                    $"dungeon-giveup-clear uid={expectedUserId}");
+            }
+            finally
+            {
+                // 无论清窗是否成功, 都必须向留守成员发布已提交的队伍代际。
+                await PublishCommittedDepartureAsync(
+                    result,
+                    $"dungeon-giveup uid={expectedUserId}");
+            }
+            FileLogger.Log($"[{ProtocolName}] DUNGEON_GIVEUP uid={expectedUserId} leftParty={expectedPartyId} disbanded={result.Disbanded} newLeader={result.NewLeaderUserId} remaining=[{string.Join(",", result.RemainingMembers.Select(m => m.UserId))}]");
         }
 
         // 退队/被踢共用: 若该会话仍在副本实例里, 清 run + 发 4 包城镇序列拉回城镇(否则人离队却卡本里)。
@@ -727,12 +954,13 @@ namespace DfoServer.Network.Handlers
             if (current == null || current.PartyId != partyId)
                 return;
             var leave = _partyManager.Leave(userId);
-            if (leave.Ok
-                && !leave.Disbanded
-                && leave.Party != null
-                && leave.Party.Count > 0)
+            if (leave.Ok)
             {
-                await BroadcastPartyInfo(leave.Party);
+                // 剩 1 人会按官方语义解散; 统一由 publish 处理(解散→留守者 type=3
+                // 清窗, 否则名册广播), 不再直接向可能是单人队的队伍广播。
+                await PublishCommittedDepartureAsync(
+                    leave,
+                    $"dungeon-rejoin-rollback uid={userId}");
             }
         }
 
@@ -1624,6 +1852,24 @@ namespace DfoServer.Network.Handlers
             }
             if (rosterSends.Count > 0)
                 await Task.WhenAll(rosterSends);
+
+            if (includeP2p && rtPacket != null)
+            {
+                var postRosterRealtimeSends = new List<Task>(recipients.Count);
+                foreach (var recipient in recipients)
+                {
+                    postRosterRealtimeSends.Add(
+                        Game.Session.SessionDirectory
+                            .TrySendBestEffortAsync(
+                                cancellationToken =>
+                                    recipient.Session.SendPacketAsync(
+                                        rtPacket,
+                                        cancellationToken),
+                                $"party={party.PartyId} phase=realtime-after-roster " +
+                                $"characterId={recipient.Member.CharacterId}"));
+                }
+                await Task.WhenAll(postRosterRealtimeSends);
+            }
         }
 
         internal static bool TrySyncTestedRelayRoom(

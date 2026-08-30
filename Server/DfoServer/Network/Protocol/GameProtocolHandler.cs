@@ -211,6 +211,18 @@ namespace DfoServer.Network
             _pvpRoomHandler = socialHandlers.PvpRoom;
             _characterSessionLifecycle = characterSessionLifecycle;
 
+            // ★0x2A 放弃回城后提交离队并通知留守成员重建名册(最小移植自 MR !22)。
+            // 之前 ConfigureDungeonGiveupPartyDeparture 从未被调用, 导致放弃者回城后仍留在队伍里,
+            // 队长界面残留已退成员。(2026-08-30 修复)
+            _townHandler.ConfigureDungeonGiveupPartyDeparture(
+                _partyHandler.HandleDungeonGiveupDepartureAsync);
+
+            // ★死亡回城后提交离队并通知留守成员重建名册。
+            // 之前 ConfigureDeathRespawnPartyDeparture 从未被调用, 导致死亡回城者仍留在队伍里,
+            // 队长界面残留已回城成员。(2026-08-30 修复)
+            _dungeonHandler.ConfigureDeathRespawnPartyDeparture(
+                _partyHandler.HandleDungeonGiveupDepartureAsync);
+
             _cmdDispatch = new GameCommandRegistry();
             _cmdDispatch.RegisterGroup("login", RegisterLoginHandlers);
             _cmdDispatch.RegisterGroup("character", RegisterCharacterHandlers);
@@ -648,14 +660,43 @@ namespace DfoServer.Network
                     targetUserId);
             }
         }
+
+        /// <summary>
+        /// Wraps ENTER_SELECT_DUNGEON (0x000F). 队长从城镇打开选图界面时,
+        /// 立即把同队所有在线队员也拉进选图界面, 避免队员弹出“召集快速组队”弹窗。
+        /// 移植自旧服务端(86JP-main) GameProtocolHandler.cs, 由号佬(今天几号啊?)适配到新服务端。
+        /// </summary>
+        private async Task HandleRaidAwareEnterSelectDungeon(
+            EnhancedClientSession session,
+            GamePacketHeader header,
+            byte[] body)
+        {
+            var preRun = session?.Player?.CurrentRun;
+            var wasInDungeon = preRun != null;
+
+            await _dungeonHandler.Handle_ENUM_CMDPACKET_ENTER_SELECT_DUNGEON(session, header, body);
+
+            // 队长从城镇(非副本内)打开选图界面 → 拉队员进选图
+            if (!wasInDungeon)
+            {
+                await _townHandler.TryFanOutPartyEnterSelectDungeonAsync(
+                    session,
+                    async memberSession =>
+                    {
+                        // HandleEnterSelectDungeon 要求 body 长度至少为 4,
+                        // 传入空数组会被拒绝。使用与队长相同的 4 字节 body。
+                        await _dungeonHandler.HandleEnterSelectDungeonForPartyMember(
+                            memberSession, header, new byte[] { 0x00, 0x00, 0x00, 0x00 });
+                    });
+            }
+        }
+
         private void RegisterDungeonHandlers(GameCommandRegistry.GameCommandRegistrationGroup d)
         {
-            d[0x000F] = _dungeonHandler.Handle_ENUM_CMDPACKET_ENTER_SELECT_DUNGEON;
+            d[0x000F] = HandleRaidAwareEnterSelectDungeon;
             d[0x0010] = _dungeonHandler.Handle_ENUM_CMDPACKET_SELECT_DUNGEON;
             d[(ushort)CmdPacketTypeA21.REQUEST_CIRCLE_ENTER] =
                 _dungeonHandler.Handle_ENUM_CMDPACKET_REQUEST_CIRCLE_ENTER;
-            d[(ushort)CmdPacketTypeA21.SEQUENTIAL_DUNGEON_INFO] =
-                _dungeonHandler.Handle_ENUM_CMDPACKET_SEQUENTIAL_DUNGEON_INFO;
             d[(ushort)CmdPacketTypeA21.DIE_MONSTER] = _dungeonHandler.Handle_ENUM_CMDPACKET_DIE_MONSTER;
             d[0x0028] = HandleRaidAwareCharacterDeath;       //40
             d[0x0029] = HandleRaidAwareUseCoin;

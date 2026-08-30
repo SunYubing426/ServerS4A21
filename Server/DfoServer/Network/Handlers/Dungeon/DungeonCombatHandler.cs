@@ -28,6 +28,16 @@ namespace DfoServer.Network.Handlers.Dungeon
         private readonly DungeonSettlementHandler _settlement;
         private readonly DungeonKillApplicationService _kills;
         private readonly TournamentDungeonCoordinator _tournament;
+        // 死亡回城后离队钩子: 回城成功后由 PartyHandler 提交离队并通知留守成员重建名册。
+        // 不接时死亡回城者仍留在队伍里, 队长界面残留已回城成员。(2026-08-30 修复)
+        private Func<EnhancedClientSession, ushort, Guid, int, Task>
+            _deathRespawnPartyDeparture;
+
+        internal void ConfigureDeathRespawnPartyDeparture(
+            Func<EnhancedClientSession, ushort, Guid, int, Task> handler)
+        {
+            _deathRespawnPartyDeparture = handler;
+        }
 
         internal DungeonCombatHandler(
             DungeonSharedServices svc,
@@ -267,7 +277,27 @@ namespace DfoServer.Network.Handlers.Dungeon
             w.WriteUInt16(session.Player.UserId);
             w.WriteByte(0x00);  // dieType=0 death confirmed
             w.WriteByte(0x00);
-            await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(0x00, 0x0020, w.ToArray()));
+            var dieStatePacket = GamePacketEnvelopeBuilder.Build(0x00, 0x0020, w.ToArray());
+            await session.SendPacketAsync(dieStatePacket);
+            // ★给所有队友也广播DIE_STATE包(state=0 death)，让他们知道
+            // 该玩家已经死亡，buff应清除。之前只发给死亡玩家自己，队友收不到，
+            // 导致队友组队信息里该玩家的旧buff图标残留。(号佬/今天几号啊? 修复)
+            if (_svc?.PartyManager != null && _svc?.Sessions != null)
+            {
+                var party = _svc.PartyManager.GetPartyByUser(session.Player.UserId);
+                if (party != null && party.Count > 1)
+                {
+                    foreach (var m in party.MembersBySlot())
+                    {
+                        if (m.UserId == session.Player.UserId) continue;
+                        if (_svc.Sessions.TryGet(m.CharacterId, out var ms) && ms?.Player != null)
+                        {
+                            await ms.SendPacketAsync(dieStatePacket);
+                        }
+                    }
+                    FileLogger.Log($"[{DungeonSharedServices.ProtocolLogName}] DIE_CHARACTER: broadcast DIE_STATE(0x0020) state=0 for uid={session.Player.UserId} to {party.Count - 1} teammates");
+                }
+            }
 
             if (deathEvent != null
                 && session.Player.IsCurrentDungeonRun(deathEvent.RunIdentity))
@@ -477,6 +507,22 @@ namespace DfoServer.Network.Handlers.Dungeon
             }
 
             DungeonRunLifecycle.CancelDeathRespawn(session);
+
+            // ★死亡回城后离队: 回城前快照队伍归属, 回城成功后经 PartyHandler 钩子提交本人离队
+            //   —— 否则留守成员的队伍窗口里, 死亡回城者会残留成"还在副本"。(2026-08-30 修复)
+            var deathExpectedUserId = session?.Player?.UserId ?? (ushort)0;
+            var deathExpectedSessionId = session?.SessionId ?? Guid.Empty;
+            var deathExpectedPartyId = 0;
+            if (deathExpectedUserId != 0 && _svc.PartyManager != null)
+            {
+                var deathLiveParty = _svc.PartyManager.GetPartyByUser(deathExpectedUserId);
+                var deathMember = deathLiveParty?.GetMember(deathExpectedUserId);
+                if (deathLiveParty != null
+                    && deathLiveParty.Count > 1
+                    && deathMember?.SessionId == deathExpectedSessionId)
+                    deathExpectedPartyId = deathLiveParty.PartyId;
+            }
+
             if (!await DungeonRunLifecycle.EndRunAsync(
                     session,
                     DungeonRunEndReason.DeathRespawn,
@@ -529,6 +575,23 @@ namespace DfoServer.Network.Handlers.Dungeon
                 return;
 
             FileLogger.Log($"[{DungeonSharedServices.ProtocolLogName}] DEATH_RESPAWN: complete source={source}");
+
+            // ★死亡回城完成后提交离队(与 0x2A 放弃回城同逻辑)。
+            if (_deathRespawnPartyDeparture != null && deathExpectedPartyId > 0)
+            {
+                try
+                {
+                    await _deathRespawnPartyDeparture(
+                        session,
+                        deathExpectedUserId,
+                        deathExpectedSessionId,
+                        deathExpectedPartyId);
+                }
+                catch (Exception ex)
+                {
+                    FileLogger.Log($"[{DungeonSharedServices.ProtocolLogName}] post-death-respawn party departure failed: cid={session.Player?.CharacterId ?? 0} error={ex.Message}");
+                }
+            }
         }
 
         private static bool IsDeathRespawnTimerCurrent(
@@ -601,7 +664,27 @@ namespace DfoServer.Network.Handlers.Dungeon
             noti.WriteUInt16(targetId);
             noti.WriteByte(0x01);  // state=1 revive
             noti.WriteByte(0x00);  // 86JP flag
-            await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(0x00, 0x0020, noti.ToArray()));
+            var reviveStatePacket = GamePacketEnvelopeBuilder.Build(0x00, 0x0020, noti.ToArray());
+            await session.SendPacketAsync(reviveStatePacket);
+            // ★给所有队友也广播DIE_STATE包(state=1 revive)，让他们知道
+            // 该玩家已经复活，buff已清除。之前只发给使用复活币的玩家自己，
+            // 队友收不到，导致队友组队信息里该玩家的旧buff图标残留。(号佬/今天几号啊? 修复)
+            if (_svc?.PartyManager != null && _svc?.Sessions != null)
+            {
+                var party = _svc.PartyManager.GetPartyByUser(session.Player.UserId);
+                if (party != null && party.Count > 1)
+                {
+                    foreach (var m in party.MembersBySlot())
+                    {
+                        if (m.UserId == session.Player.UserId) continue;
+                        if (_svc.Sessions.TryGet(m.CharacterId, out var ms) && ms?.Player != null)
+                        {
+                            await ms.SendPacketAsync(reviveStatePacket);
+                        }
+                    }
+                    FileLogger.Log($"[{DungeonSharedServices.ProtocolLogName}] USE_COIN: broadcast DIE_STATE(0x0020) state=1 for uid={targetId} to {party.Count - 1} teammates");
+                }
+            }
             if (!session.Player.IsCurrentDungeonRun(runIdentity))
                 return false;
 

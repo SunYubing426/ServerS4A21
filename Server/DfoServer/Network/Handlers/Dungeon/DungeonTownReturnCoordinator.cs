@@ -13,6 +13,10 @@ namespace DfoServer.Network.Handlers.Dungeon
         private readonly DungeonProgressNotificationProjector
             _progressNotifications;
         private readonly ISessionDirectory _sessions;
+        // 城镇同屏投影钩子(最小移植自 MR !22): 回城时由 TownHandler 走
+        // SetUserAreaCoreAsync 同屏广播, 否则回退到只发自己的 0x0017/0x0018。
+        private Func<EnhancedClientSession, DungeonRunIdentity, Task>
+            _projectTownPresence;
 
         internal DungeonTownReturnCoordinator(
             DungeonInstanceRegistry instanceRegistry,
@@ -24,6 +28,13 @@ namespace DfoServer.Network.Handlers.Dungeon
             _progressNotifications = progressNotifications
                 ?? throw new ArgumentNullException(nameof(progressNotifications));
             _sessions = sessions;
+        }
+
+        internal void ConfigureTownPresenceProjection(
+            Func<EnhancedClientSession, DungeonRunIdentity, Task> projection)
+        {
+            _projectTownPresence = projection
+                ?? throw new ArgumentNullException(nameof(projection));
         }
 
         internal async Task<bool> ReturnAsync(
@@ -63,18 +74,40 @@ namespace DfoServer.Network.Handlers.Dungeon
                 EnterSelectDungeonStateBuilder.BuildUserState(session.Player)));
             if (!DungeonRunLifecycle.CanProjectTownState(session, runIdentity))
                 return true;
-            await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
-                0x00,
-                0x0017,
-                TownAreaNotificationBuilder.BuildUserArea(snapshot)));
-            if (!DungeonRunLifecycle.CanProjectTownState(session, runIdentity))
-                return true;
-            await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
-                0x00,
-                0x0018,
-                TownAreaNotificationBuilder.BuildAreaUsers(snapshot)));
-            if (!DungeonRunLifecycle.CanProjectTownState(session, runIdentity))
-                return true;
+            var projectTownPresence = _projectTownPresence;
+            var projectedTownPresence = false;
+            if (projectTownPresence != null)
+            {
+                try
+                {
+                    await projectTownPresence(session, runIdentity);
+                    projectedTownPresence = true;
+                }
+                catch (Exception ex)
+                {
+                    FileLogger.Log(
+                        $"[{DungeonSharedServices.ProtocolLogName}] " +
+                        $"town presence projection failed; using self-only fallback " +
+                        $"cid={session.Player.CharacterId} " +
+                        $"run={runIdentity.RunId}/{runIdentity.RunGeneration}: " +
+                        ex.Message);
+                }
+            }
+            if (!projectedTownPresence)
+            {
+                await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
+                    0x00,
+                    0x0017,
+                    TownAreaNotificationBuilder.BuildUserArea(snapshot)));
+                if (!DungeonRunLifecycle.CanProjectTownState(session, runIdentity))
+                    return true;
+                await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
+                    0x00,
+                    0x0018,
+                    TownAreaNotificationBuilder.BuildAreaUsers(snapshot)));
+                if (!DungeonRunLifecycle.CanProjectTownState(session, runIdentity))
+                    return true;
+            }
             await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
                 0x00,
                 0x00CA,
