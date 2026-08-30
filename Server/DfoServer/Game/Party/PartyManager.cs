@@ -209,6 +209,19 @@ namespace DfoServer.Game.Party
                 return result;
             }
 
+            // 官方语义: 队伍人数不足 2 即不复存在 —— A21 客户端从未有"单人队伍"
+            // 包的处理路径(0x09 单人名册/0x0099/0x000B 单人收包即进程退出, 2026-08-27 实机)。
+            // 剩 1 人立即解散, 由 handler 给留守者发 PARTY_INFO type=3 清窗。
+            if (party.Count == 1)
+            {
+                result.RemainingMembers = party.MembersBySlot();
+                foreach (var survivor in result.RemainingMembers)
+                    _userToParty.Remove(survivor.UserId);
+                _parties.Remove(party.PartyId);
+                result.Disbanded = true;
+                return result;
+            }
+
             if (wasLeader)
             {
                 var next = party.MembersBySlot()[0];
@@ -305,6 +318,14 @@ namespace DfoServer.Game.Party
                     _parties.Remove(party.PartyId);
                     result.Disbanded = true;
                 }
+                else if (party.Count == 1)
+                {
+                    // 剩 1 人即解散(官方语义; 客户端无单人队伍包处理路径)。
+                    foreach (var survivor in result.RemainingMembers)
+                        _userToParty.Remove(survivor.UserId);
+                    _parties.Remove(party.PartyId);
+                    result.Disbanded = true;
+                }
                 return result;
             }
         }
@@ -337,13 +358,76 @@ namespace DfoServer.Game.Party
                 party.RemoveMember(targetUserId);
                 _userToParty.Remove(targetUserId);
 
-                return new PartyOpResult
+                var result = new PartyOpResult
                 {
                     Ok = true,
                     Party = party,
                     TargetUserId = targetUserId,
                     RemainingMembers = party.MembersBySlot(),
                 };
+
+                // 剩 1 人即解散(官方语义; 客户端无单人队伍包处理路径)。
+                if (party.Count == 1)
+                {
+                    foreach (var survivor in result.RemainingMembers)
+                        _userToParty.Remove(survivor.UserId);
+                    _parties.Remove(party.PartyId);
+                    result.Disbanded = true;
+                }
+                return result;
+            }
+        }
+
+        /// <summary>
+        /// 名册减员后的线格式重建: A21 客户端对减员 diff 收包即崩, 清窗后同 id 重发也不渲染,
+        /// 唯一已验证的重建原语是"退役旧代际 + 新 partyId formation"(委托队长同款)。
+        /// 仅在全体留守者都不在副本时由 handler 调用(副本内重建会破坏实例注册的 partyId 绑定)。
+        /// </summary>
+        public PartyOpResult RebuildWireGeneration(int partyId)
+        {
+            lock (_lock)
+            {
+                if (!_parties.TryGetValue(partyId, out var oldParty) ||
+                    oldParty.Count < 2)
+                {
+                    return PartyOpResult.Fail("rebuild_not_needed");
+                }
+
+                var leader = oldParty.GetMember(oldParty.LeaderUserId);
+                if (leader == null)
+                    return PartyOpResult.Fail("leader_missing");
+
+                var orderedMembers = oldParty.MembersBySlot();
+                var retiredSnapshot = oldParty.CreateSnapshot();
+                foreach (var member in orderedMembers)
+                    _userToParty.Remove(member.UserId);
+                _parties.Remove(partyId);
+
+                var rebuilt = CreateReplacementPartyLocked(
+                    oldParty,
+                    leader,
+                    orderedMembers);
+                _parties[rebuilt.PartyId] = rebuilt;
+                foreach (var member in rebuilt.Members)
+                    _userToParty[member.UserId] = rebuilt.PartyId;
+
+                return new PartyOpResult
+                {
+                    Ok = true,
+                    Party = rebuilt,
+                    RetiredParty = retiredSnapshot,
+                    RemainingMembers = rebuilt.MembersBySlot(),
+                };
+            }
+        }
+
+        /// <summary>置/清"副本内减员未刷新客户端名册"标记。</summary>
+        public void SetWireRefreshSuppressed(int partyId, bool value)
+        {
+            lock (_lock)
+            {
+                if (_parties.TryGetValue(partyId, out var party))
+                    party.WireRefreshSuppressed = value;
             }
         }
 

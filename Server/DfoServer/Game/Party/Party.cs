@@ -60,8 +60,20 @@ namespace DfoServer.Game.Party
         public ushort DungIndex { get; set; }
         public byte DungDiffi { get; set; }
 
+        // A21 SET_PARTY_INFO supplies these 12 direct fields. PARTY_INFO(type
+        // 0/1) writes info0, a conditional empty dstr when info0 is zero, then
+        // info1..info11. Most individual field meanings remain unknown.
+        public byte[] PartyInfoBlock { get; set; } =
+            new byte[] { 0, 0, 4, 0, 0, 0, 0, 5, 0, 0, 0xFF, 0xFF };
+
         /// <summary>单人游戏(自建 1 人队); 进副本单刷时用。</summary>
         public bool IsSinglePlay { get; set; }
+
+        /// <summary>
+        /// 副本内发生过减员但未向客户端刷新名册(抑制窗口): 客户端对减员 diff
+        /// 收包即崩/清窗后同 id 不渲染, 只能等全员回城后用新 partyId 重建。
+        /// </summary>
+        public bool WireRefreshSuppressed { get; set; }
 
         public IReadOnlyList<PartyMember> Members => _members;
 
@@ -167,7 +179,11 @@ namespace DfoServer.Game.Party
                 UserMax = UserMax,
                 DungIndex = DungIndex,
                 DungDiffi = DungDiffi,
+                PartyInfoBlock = PartyInfoBlock == null
+                    ? System.Array.Empty<byte>()
+                    : (byte[])PartyInfoBlock.Clone(),
                 IsSinglePlay = IsSinglePlay,
+                WireRefreshSuppressed = WireRefreshSuppressed,
             };
 
             foreach (var member in _members)

@@ -587,6 +587,10 @@ namespace DfoServer.Infrastructure
                 udpRelay,
                 characterTransitions: world.CharacterTransitions,
                 database: core.Database);
+            // 副本内减员后的名册延迟重建接线: 成员回城完成 → 全员回城时
+            // 用新 partyId 重建名册并广播(减员 diff 客户端收包即崩)。
+            townDungeon.Town.PartyWireTownRefresher =
+                party.NotifyPartyWireTownReturnAsync;
             var raid = new RaidHandler(
                 core.CharacterRepository,
                 world.Sessions,
