@@ -120,14 +120,20 @@ namespace DfoServer.Network.Handlers
         public Task Handle_ENUM_CMDPACKET_ENTER_SELECT_DUNGEON(EnhancedClientSession session, GamePacketHeader header, byte[] body)
             => _entry.HandleEnterSelectDungeon(session, header, body);
 
+        /// <summary>
+        /// 队员进入副本选择界面（由队长打开选图界面时触发）。
+        /// 与 HandleEnterSelectDungeon 的区别：suppressPartyPopup=true，
+        /// 避免队员客户端弹出“召集快速组队”弹窗。
+        /// 移植自旧服务端(86JP-main)。
+        /// </summary>
+        public Task HandleEnterSelectDungeonForPartyMember(EnhancedClientSession session, GamePacketHeader header, byte[] body)
+            => _entry.HandleEnterSelectDungeon(session, header, body, suppressPartyPopup: true);
+
         public Task Handle_ENUM_CMDPACKET_SELECT_DUNGEON(EnhancedClientSession session, GamePacketHeader header, byte[] body)
             => _entry.HandleSelectDungeon(session, header, body);
 
         public Task Handle_ENUM_CMDPACKET_REQUEST_CIRCLE_ENTER(EnhancedClientSession session, GamePacketHeader header, byte[] body)
             => _entry.HandleRequestCircleEnter(session, header, body);
-
-        public Task Handle_ENUM_CMDPACKET_SEQUENTIAL_DUNGEON_INFO(EnhancedClientSession session, GamePacketHeader header, byte[] body)
-            => _entry.HandleSequentialDungeonInfo(session, header, body);
 
         public Task Handle_ENUM_CMDPACKET_GORGEOUS_CHALLENGE_TOGGLE(EnhancedClientSession session, GamePacketHeader header, byte[] body)
             => _entry.HandleGorgeousChallengeToggle(session, header, body);

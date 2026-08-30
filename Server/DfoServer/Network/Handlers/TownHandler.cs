@@ -1018,14 +1018,6 @@ namespace DfoServer.Network.Handlers
                 session,
                 BuildTownAreaProjectionBody(session.Player),
                 projectionGuard);
-            if (!CanContinueTownProjection(session, projectionGuard))
-            {
-                return false;
-            }
-
-            // 回城过图后客户端重置结婚属性 UI：城镇 USER_STATE/USER_AREA 投影之后
-            // 补发婚礼回放三包（与选角序列同包体）。仅覆盖进/出本触发点，不挂城镇内每次过图。
-            await InventoryRefreshSender.SendWeddingReplayRefresh(session);
             return CanContinueTownProjection(session, projectionGuard);
         }
 
@@ -1179,5 +1171,56 @@ namespace DfoServer.Network.Handlers
                && player.CharacterId > 0
                && player.CurrentRun == null
                && player.UserState == 0x00;
+
+        /// <summary>
+        /// 队长从城镇打开选图界面(0x000F)时, 把同队所有在线队员也拉进选图界面。
+        /// 移植自旧服务端(86JP-main) TownHandler.cs 第1347-1390行。
+        /// 关键: 队员必须在队长打开选图界面的同时进入选图界面, 否则等到队长选择具体副本(0x0010)
+        /// 时才给队员发ENTER_SELECT_DUNGEON包, 队员客户端会弹出“召集快速组队”弹窗。
+        /// </summary>
+        public async Task TryFanOutPartyEnterSelectDungeonAsync(
+            EnhancedClientSession leader,
+            Func<EnhancedClientSession, Task> memberCallback)
+        {
+            if (Environment.GetEnvironmentVariable("DFO_PARTY_DUNGEON_COOP") == "0") return;
+            if (_partyManager == null || _sessions == null || leader?.Player == null || memberCallback == null) return;
+
+            var leaderUid = (ushort)leader.Player.CharacterId;
+            var party = _partyManager.GetPartyByUser(leaderUid);
+            if (party == null || party.Count <= 1 || !party.IsLeader(leaderUid)) return;
+
+            FileLogger.Log($"[{ProtocolName}] PARTY_ENTER_SELECT_FANOUT: leader={leader.Player.CharacterId} party={party.PartyId} members={party.Count} → pulling members into selection screen");
+            foreach (var m in party.MembersBySlot())
+            {
+                if (m.UserId == leaderUid) continue;
+                var found = _sessions.TryGet(m.CharacterId, out var bs);
+                if (!found || bs?.Player == null || bs.TcpClient == null || !bs.TcpClient.Connected)
+                {
+                    FileLogger.Log($"[{ProtocolName}] PARTY_ENTER_SELECT_FANOUT: member uid={m.UserId} offline, skip");
+                    continue;
+                }
+                // 防重复进入：如果队员已在副本选择界面(UserState=0x01)或已在副本(CurrentRun!=null)，跳过
+                // 避免短时间内多次进入导致客户端状态混乱闪退
+                if (bs.Player.CurrentRun != null)
+                {
+                    FileLogger.Log($"[{ProtocolName}] PARTY_ENTER_SELECT_FANOUT: member uid={m.UserId} already in dungeon, skip");
+                    continue;
+                }
+                if (bs.Player.UserState != 0x00 || bs.Player.CurrentDungeonSelection != null)
+                {
+                    FileLogger.Log($"[{ProtocolName}] PARTY_ENTER_SELECT_FANOUT: member uid={m.UserId} already in selection (state={bs.Player.UserState}), skip");
+                    continue;
+                }
+                try
+                {
+                    await memberCallback(bs);
+                    FileLogger.Log($"[{ProtocolName}] PARTY_ENTER_SELECT_FANOUT: member cid={bs.Player.CharacterId} → selection screen");
+                }
+                catch (Exception ex)
+                {
+                    FileLogger.Log($"[{ProtocolName}] PARTY_ENTER_SELECT_FANOUT: member uid={m.UserId} exception: {ex.Message}");
+                }
+            }
+        }
     }
 }
