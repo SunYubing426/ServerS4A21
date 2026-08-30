@@ -203,6 +203,8 @@ namespace DfoServer.Game.Dungeon
         internal byte EntryPartySlotIndex { get => Selection.EntryPartySlotIndex; set => Selection.EntryPartySlotIndex = value; }
         internal DungeonPartySelectionCohort EntryPartySelectionCohort { get => Selection.EntryPartySelectionCohort; set => Selection.EntryPartySelectionCohort = value; }
         internal int ChronicleDropJobGroup { get => Selection.ChronicleDropJobGroup; set => Selection.ChronicleDropJobGroup = value; }
+        internal int DimensionDropJob { get => Selection.DimensionDropJob; set => Selection.DimensionDropJob = value; }
+        internal int DimensionDropGrowType { get => Selection.DimensionDropGrowType; set => Selection.DimensionDropGrowType = value; }
         public int LinkedDungeonNextId { get => Selection.LinkedDungeonNextId; set => Selection.LinkedDungeonNextId = value; }
         public int LinkedDungeonNextRate { get => Selection.LinkedDungeonNextRate; set => Selection.LinkedDungeonNextRate = value; }
         public int LinkedDungeonNextCondition { get => Selection.LinkedDungeonNextCondition; set => Selection.LinkedDungeonNextCondition = value; }
@@ -309,6 +311,7 @@ namespace DfoServer.Game.Dungeon
         internal SecretShop.SecretShopOffer SecretShopOffer { get => Settlement.SecretShopOffer; set => Settlement.SecretShopOffer = value; }
         public List<ClearRewardGenerator.CardReward> CardRewards { get => Settlement.CardRewards; set => Settlement.CardRewards = value; }
         public int PaidCardCost { get => Settlement.PaidCardCost; set => Settlement.PaidCardCost = Math.Max(0, value); }
+        public bool PaidCardUsesDevilContract { get => Settlement.PaidCardUsesDevilContract; set => Settlement.PaidCardUsesDevilContract = value; }
         public int CardFlipCount { get => Settlement.CardFlipCount; set => Settlement.CardFlipCount = value; }
         public byte[] FreeCardSlots { get => Settlement.FreeCardSlots; set => Settlement.FreeCardSlots = value; }
         public byte[] PaidCardSlots { get => Settlement.PaidCardSlots; set => Settlement.PaidCardSlots = value; }

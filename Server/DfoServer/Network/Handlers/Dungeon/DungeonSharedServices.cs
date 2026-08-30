@@ -47,8 +47,10 @@ namespace DfoServer.Network.Handlers.Dungeon
         internal Game.Session.ISessionDirectory Sessions { get; }
         internal CardRewardCoordinator CardRewards { get; }
         internal Game.Dungeon.DropService Drops { get; }
+        internal Game.Premium.DevilContractUsagePolicy DevilContracts { get; }
         internal Game.Dungeon.DungeonEntryAdmissionApplicationService
             EntryAdmission { get; }
+        internal Game.Dungeon.DungeonEntryLimitService EntryLimits { get; }
         internal DungeonAdmissionRejectSender AdmissionRejects { get; }
         internal DungeonProgressNotificationProjector ProgressNotifications { get; }
         internal DungeonTownReturnCoordinator TownReturn { get; }
@@ -107,6 +109,8 @@ namespace DfoServer.Network.Handlers.Dungeon
             DailyChallenges = new Game.Quests.DailyChallengeService(
                 ConnectionString,
                 new Game.DailyReset.DailyResetService(Database));
+            DevilContracts = new Game.Premium.DevilContractUsagePolicy(
+                Database);
             Subtype1Repository = new SqliteSubtype1Repository(
                 Database);
             CharacterStateRepository = new SqliteCharacterStateRepository(
@@ -155,6 +159,7 @@ namespace DfoServer.Network.Handlers.Dungeon
             EntryAdmission =
                 new Game.Dungeon.DungeonEntryAdmissionApplicationService(
                     entryCost);
+            EntryLimits = new Game.Dungeon.DungeonEntryLimitService(Database);
             Tournaments =
                 new Game.Dungeon.Tournament
                     .TournamentDungeonApplicationService();
@@ -188,7 +193,8 @@ namespace DfoServer.Network.Handlers.Dungeon
                         Database));
             CardRewards = new CardRewardCoordinator(
                 new Game.Dungeon.CardRewardService(PersistentEffects),
-                sessions: Sessions);
+                sessions: Sessions,
+                database: Database);
             AdmissionRejects = new DungeonAdmissionRejectSender();
         }
     }

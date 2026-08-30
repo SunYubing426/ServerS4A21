@@ -2027,7 +2027,10 @@ namespace DfoServer.Network.Handlers
             }
 
             var recipients =
-                new List<(PartyMember Member, EnhancedClientSession Session)>(
+                new List<(
+                    PartyMember Member,
+                    EnhancedClientSession Session,
+                    byte[] EndpointPacket)>(
                     members.Count);
             foreach (var member in members)
             {
@@ -2038,8 +2041,64 @@ namespace DfoServer.Network.Handlers
                 {
                     continue;
                 }
-                recipients.Add((member, session));
+                var endpointPacket = directIpPacket;
+                if (relayMode)
+                {
+                    var relayBody =
+                        PartyIpInfoBuilder.BuildForRelay(
+                            members,
+                            member.UserId,
+                            relayIpBytes,
+                            peer =>
+                                relaySnapshot.TryGetPort(
+                                    member.UserId,
+                                    peer,
+                                    out var port)
+                                    ? port
+                                    : 0);
+                    endpointPacket = GamePacketEnvelopeBuilder.Build(
+                        0x00,
+                        0x000B,
+                        relayBody);
+                }
+                recipients.Add((member, session, endpointPacket));
             }
+
+            // PARTY_INFO carries only UIDs. Before any roster refresh, make
+            // every recipient aware of every peer so all member objects can
+            // be created, including an existing follower and a fresh third
+            // or fourth member in another town/area.
+            var contextSends = new List<Task>();
+            var recipientsByUid = recipients.ToDictionary(
+                recipient => recipient.Member.UserId);
+            foreach (var pair in BuildPartyFormationContextPlan(members))
+            {
+                if (!recipientsByUid.TryGetValue(
+                        pair.RecipientUid,
+                        out var recipient)
+                    || !recipientsByUid.TryGetValue(
+                        pair.SourceUid,
+                        out var source))
+                {
+                    continue;
+                }
+
+                var contextPacket =
+                    BuildPartyFormationUserContextPacket(source.Session);
+                if (contextPacket == null)
+                    continue;
+                contextSends.Add(
+                    Game.Session.SessionDirectory.TrySendBestEffortAsync(
+                        cancellationToken =>
+                            recipient.Session.SendPacketAsync(
+                                contextPacket,
+                                cancellationToken),
+                        $"party={party.PartyId} phase=user-context " +
+                        $"recipient={pair.RecipientUid} " +
+                        $"source={pair.SourceUid}"));
+            }
+            if (contextSends.Count > 0)
+                await Task.WhenAll(contextSends);
 
             // Preserve the client-proven cross-recipient formation phases:
             // realtime to all -> acceptance ACK -> endpoints to all -> roster.
@@ -2065,46 +2124,28 @@ namespace DfoServer.Network.Handlers
                     await Task.WhenAll(realtimeSends);
             }
 
-            if (afterRealtime != null)
-                await afterRealtime();
-
             if (includeP2p)
             {
                 var endpointSends = new List<Task>(recipients.Count);
                 foreach (var recipient in recipients)
                 {
-                    var ipPacket = directIpPacket;
-                    if (relayMode)
-                    {
-                        var relayBody =
-                            PartyIpInfoBuilder.BuildForRelay(
-                                members,
-                                recipient.Member.UserId,
-                                relayIpBytes,
-                                peer =>
-                                    relaySnapshot.TryGetPort(
-                                        recipient.Member.UserId,
-                                        peer,
-                                        out var port)
-                                        ? port
-                                        : 0);
-                        ipPacket = GamePacketEnvelopeBuilder.Build(
-                            0x00, 0x000B, relayBody);
-                    }
-
                     endpointSends.Add(
                         Game.Session.SessionDirectory
                             .TrySendBestEffortAsync(
                                 cancellationToken =>
                                     recipient.Session.SendPacketAsync(
-                                        ipPacket,
+                                        recipient.EndpointPacket,
                                         cancellationToken),
-                                $"party={party.PartyId} phase=endpoints " +
+                                $"party={party.PartyId} " +
+                                "phase=endpoints-before-roster " +
                                 $"characterId={recipient.Member.CharacterId}"));
                 }
                 if (endpointSends.Count > 0)
                     await Task.WhenAll(endpointSends);
             }
+
+            if (afterRealtime != null)
+                await afterRealtime();
 
             var rosterSends = new List<Task>(recipients.Count);
             foreach (var recipient in recipients)
@@ -2123,6 +2164,29 @@ namespace DfoServer.Network.Handlers
             if (rosterSends.Count > 0)
                 await Task.WhenAll(rosterSends);
 
+            // The final type-0 roster has now created/replaced every member
+            // object. Reapply each recipient's exact bootstrap endpoint bytes
+            // so the binding lands on the final objects rather than a
+            // temporary pre-roster object.
+            if (includeP2p)
+            {
+                var endpointSends = new List<Task>(recipients.Count);
+                foreach (var recipient in recipients)
+                {
+                    endpointSends.Add(
+                        Game.Session.SessionDirectory.TrySendBestEffortAsync(
+                            cancellationToken =>
+                                recipient.Session.SendPacketAsync(
+                                    recipient.EndpointPacket,
+                                    cancellationToken),
+                            $"party={party.PartyId} " +
+                            "phase=endpoints-after-roster " +
+                            $"characterId={recipient.Member.CharacterId}"));
+                }
+                if (endpointSends.Count > 0)
+                    await Task.WhenAll(endpointSends);
+            }
+
             if (includeP2p && rtPacket != null)
             {
                 var postRosterRealtimeSends = new List<Task>(recipients.Count);
@@ -2140,6 +2204,59 @@ namespace DfoServer.Network.Handlers
                 }
                 await Task.WhenAll(postRosterRealtimeSends);
             }
+        }
+
+        internal static byte[][] BuildDirectP2pProjectionPackets(
+            Party party)
+        {
+            if (party == null)
+                return Array.Empty<byte[]>();
+
+            return new[]
+            {
+                GamePacketEnvelopeBuilder.Build(
+                    0x00,
+                    0x000B,
+                    PartyIpInfoBuilder.Build(party)),
+                GamePacketEnvelopeBuilder.Build(
+                    0x00,
+                    0x0099,
+                    PartyRealtimeInfoBuilder.Build(party)),
+            };
+        }
+
+        internal static IReadOnlyList<(
+            ushort RecipientUid,
+            ushort SourceUid)> BuildPartyFormationContextPlan(
+                IReadOnlyList<PartyMember> members)
+        {
+            var plan = new List<(ushort, ushort)>();
+            if (members == null)
+                return plan;
+
+            foreach (var recipient in members)
+            {
+                foreach (var source in members)
+                {
+                    if (recipient.UserId != source.UserId)
+                        plan.Add((recipient.UserId, source.UserId));
+                }
+            }
+            return plan;
+        }
+
+        internal static byte[] BuildPartyFormationUserContextPacket(
+            EnhancedClientSession source)
+        {
+            if (source?.Player == null || source.Player.UserId == 0)
+                return null;
+
+            var body = UserInfoSubtype0Builder.BuildNotificationBody(
+                UnitedFriendSystem.BuildUserInfoRecord(source.Player));
+            return GamePacketEnvelopeBuilder.Build(
+                0x00,
+                (ushort)NotiPacketTypeA21.USERINFO,
+                body);
         }
 
         internal static bool TrySyncTestedRelayRoom(

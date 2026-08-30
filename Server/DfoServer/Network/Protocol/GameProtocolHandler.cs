@@ -24,9 +24,6 @@ namespace DfoServer.Network
 {
     public class GameProtocolHandler : BaseProtocolHandler, IDisposable
     {
-        private static readonly TimeSpan DungeonLoadingTimeout =
-            TimeSpan.FromSeconds(45);
-
         private readonly LoginHandler _loginHandler;
         private readonly CharacterSelectHandler _characterSelectHandler;
         private readonly GrowupChangeHandler _growupChangeHandler;
@@ -62,12 +59,13 @@ namespace DfoServer.Network
         private readonly EnchanterHandler _enchanterHandler;
         // 组队与城镇/副本共享同一个 PartyManager 实例: 副本 fan-out 与跟随退出都要看到同一份队伍状态。
         private readonly Game.Party.PartyManager _partyManager;
-        private readonly DungeonInstanceRegistry _dungeonInstances;
         private readonly PartyHandler _partyHandler;
         private readonly RaidHandler _raidHandler;
         private readonly ChatHandler _chatHandler;
         private readonly Handlers.Dungeon.DungeonRejoinCoordinator
             _dungeonRejoin;
+        private readonly Handlers.Dungeon.DungeonLoadingCoordinator
+            _dungeonLoading;
         private readonly CharacterTransitionCoordinator _characterTransitions;
         private readonly PvpChannelInfoHandler _pvpChannelInfoHandler;
         private readonly PvpRoomHandler _pvpRoomHandler;
@@ -170,7 +168,6 @@ namespace DfoServer.Network
             var sqliteSelectCharacterDataSource = core.SelectCharacterDataSource;
 
             _characterTransitions = world.CharacterTransitions;
-            _dungeonInstances = world.DungeonInstances;
             _loginHandler = characterInventoryHandlers.Login;
             _characterSelectHandler = characterInventoryHandlers.CharacterSelect;
             _inventoryRefreshSender = inventory.InventoryRefreshSender;
@@ -203,18 +200,10 @@ namespace DfoServer.Network
             _shopCoinEventHandler = featureHandlers.ShopCoinEvent;
             _mercenaryHandler = featureHandlers.Mercenary;
             _partyHandler = socialHandlers.Party;
-            _townHandler.ConfigureDungeonGiveupPartyDeparture(
-                _partyHandler.HandleDungeonGiveupWithinTransitionAsync);
-            _townHandler.ConfigureTownPartyListPublisher(
-                _partyHandler.PublishTownPartyListsAsync);
-            _dungeonHandler.ConfigureTownPartyListPublisher(
-                _partyHandler.PublishTownPartyListsAsync);
             _raidHandler = socialHandlers.Raid;
             _chatHandler = socialHandlers.Chat;
             _dungeonRejoin = socialHandlers.DungeonRejoin;
-            _dungeonHandler.ConfigureLoadingProjectionStarted(
-                ScheduleDungeonLoadingTimeout,
-                HandleDungeonLoadingProjectionRejectedAsync);
+            _dungeonLoading = socialHandlers.DungeonLoading;
             _growthCapsuleHandler = featureHandlers.GrowthCapsule;
             _goldLimitHandler = featureHandlers.GoldLimit;
             _craneMiniGameHandler = featureHandlers.CraneMiniGame;
@@ -611,321 +600,6 @@ namespace DfoServer.Network
                     reason);
         }
 
-        private async Task HandleGiveupGame(
-            EnhancedClientSession session,
-            GamePacketHeader header,
-            byte[] body)
-        {
-            await HandleRaidAwareDungeonExit(
-                session,
-                header,
-                body,
-                _townHandler.Handle_ENUM_CMDPACKET_GIVEUP_GAME,
-                "giveup");
-        }
-
-        private async Task HandleRaidAwareFinishLoading(
-            EnhancedClientSession session,
-            GamePacketHeader header,
-            byte[] body)
-        {
-            var run = session?.Player?.CurrentRun;
-            if (run == null)
-            {
-                await _townHandler.Handle_ENUM_CMDPACKET_FINISH_LOADING(
-                    session,
-                    header,
-                    body);
-            }
-            else
-            {
-                await HandleDungeonFinishLoadingAsync(session, run);
-            }
-            await _raidHandler.HandleDungeonLoadedAsync(session);
-        }
-
-        private async Task HandleDungeonFinishLoadingAsync(
-            EnhancedClientSession session,
-            DungeonRun run)
-        {
-            var participantRoom = run.CaptureParticipantRoomIdentity();
-            if (!participantRoom.IsValid
-                || !run.Instance.TryGetRoom(
-                    participantRoom.Room.RoomInstanceId,
-                    out var room))
-            {
-                FileLogger.Log(
-                    $"[GameProtocol] DUNGEON_LOAD fallback: " +
-                    $"cid={session?.Player?.CharacterId ?? 0} " +
-                    $"run={run?.RunId ?? 0} room={run?.CurrentRoomInstanceId ?? 0}");
-                await _townHandler.SendFinishLoadingCompletionAsync(session);
-                return;
-            }
-
-            var activeParticipants = CaptureDungeonLoadingParticipants(
-                participantRoom.Room.Instance);
-            var ready = room.MarkLoadingReady(
-                participantRoom.Run,
-                activeParticipants);
-            if (!ready.Accepted)
-            {
-                FileLogger.Log(
-                    $"[GameProtocol] DUNGEON_LOAD ignored stale/duplicate: " +
-                    $"cid={session.Player.CharacterId} " +
-                    $"instance={participantRoom.Room.Instance.PartyDungeonInstanceId} " +
-                    $"room={participantRoom.Room.RoomInstanceId}");
-                return;
-            }
-
-            FileLogger.Log(
-                $"[GameProtocol] DUNGEON_LOAD ready: " +
-                $"cid={session.Player.CharacterId} " +
-                $"instance={participantRoom.Room.Instance.PartyDungeonInstanceId} " +
-                $"room={participantRoom.Room.RoomInstanceId} " +
-                $"generation={ready.Generation} release={ready.Released}");
-            if (ready.Released)
-            {
-                await SendDungeonLoadingCompletionAsync(
-                    participantRoom.Room,
-                    ready.Participants,
-                    "all-ready");
-                return;
-            }
-
-        }
-
-        private List<DungeonRunIdentity> CaptureDungeonLoadingParticipants(
-            DungeonInstanceIdentity instanceIdentity)
-        {
-            var result = new List<DungeonRunIdentity>();
-            foreach (var participant in _dungeonInstances
-                         .CaptureInstanceParticipantRoster(instanceIdentity))
-            {
-                if (participant.RunIdentity.IsValid
-                    && !result.Contains(participant.RunIdentity))
-                    result.Add(participant.RunIdentity);
-            }
-            return result;
-        }
-
-        private async Task SendDungeonLoadingCompletionAsync(
-            DungeonRoomIdentity roomIdentity,
-            IReadOnlyList<DungeonRunIdentity> participants,
-            string reason)
-        {
-            if (!roomIdentity.IsValid || participants == null)
-                return;
-
-            var releases = new List<Task<bool>>();
-            var sessions = _worldDependencies.Sessions;
-            var roster = _dungeonInstances.CaptureParticipantRoster(roomIdentity);
-            foreach (var participant in roster)
-            {
-                if (!ContainsRunIdentity(participants, participant.RunIdentity)
-                    || !sessions.TryGet(
-                        participant.CharacterId,
-                        out var candidate)
-                    || candidate?.Player == null
-                    || candidate.TcpClient == null
-                    || !candidate.TcpClient.Connected
-                    || !candidate.Player.IsCurrentDungeonParticipantRoom(
-                        new DungeonParticipantRoomIdentity(
-                            participant.RunIdentity,
-                            roomIdentity)))
-                {
-                    continue;
-                }
-
-                releases.Add(TrySendDungeonLoadingCompletionAsync(candidate));
-            }
-
-            var releaseResults = await Task.WhenAll(releases);
-            var releasedCount = 0;
-            for (var i = 0; i < releaseResults.Length; i++)
-            {
-                if (releaseResults[i])
-                    releasedCount++;
-            }
-            FileLogger.Log(
-                $"[GameProtocol] DUNGEON_LOAD released: " +
-                $"instance={roomIdentity.Instance.PartyDungeonInstanceId} " +
-                $"room={roomIdentity.RoomInstanceId} " +
-                $"reason={reason} participants={releasedCount}/{participants.Count}");
-        }
-
-        private async Task<bool> TrySendDungeonLoadingCompletionAsync(
-            EnhancedClientSession session)
-        {
-            try
-            {
-                await _townHandler.SendFinishLoadingCompletionAsync(session);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                FileLogger.Log(
-                    $"[GameProtocol] DUNGEON_LOAD release failed: " +
-                    $"cid={session?.Player?.CharacterId ?? 0} " +
-                    $"error={ex.Message}");
-                return false;
-            }
-        }
-
-        private void ScheduleDungeonLoadingTimeout(
-            DungeonRoomIdentity roomIdentity,
-            DungeonInstanceRoom room,
-            long generation)
-        {
-            var timerName =
-                $"a21-dungeon-load-{roomIdentity.Instance.PartyDungeonInstanceId}-" +
-                $"{roomIdentity.RoomInstanceId}-{generation}";
-            ClockService.Instance.ScheduleOneShotAfterAsync(
-                timerName,
-                DungeonLoadingTimeout,
-                async _ => await HandleDungeonLoadingTimeoutAsync(
-                    roomIdentity,
-                    room,
-                    generation));
-        }
-
-        private async Task HandleDungeonLoadingProjectionRejectedAsync(
-            EnhancedClientSession session,
-            DungeonRunIdentity runIdentity,
-            DungeonRoomIdentity roomIdentity)
-        {
-            if (session?.Player == null
-                || !session.Player.IsCurrentDungeonParticipantRoom(
-                    new DungeonParticipantRoomIdentity(
-                        runIdentity,
-                        roomIdentity)))
-            {
-                return;
-            }
-
-            await HandleGiveupGame(
-                session,
-                new GamePacketHeader
-                {
-                    cmd = 0x01,
-                    type = 0x002A,
-                },
-                Array.Empty<byte>());
-        }
-
-        private async Task HandleDungeonLoadingTimeoutAsync(
-            DungeonRoomIdentity roomIdentity,
-            DungeonInstanceRoom room,
-            long generation)
-        {
-            var activeParticipants = CaptureDungeonLoadingParticipants(
-                roomIdentity.Instance);
-            var timeout = room.ForceLoadingCompletion(
-                generation,
-                activeParticipants);
-            if (!timeout.Accepted)
-                return;
-
-            FileLogger.Log(
-                $"[GameProtocol] DUNGEON_LOAD timeout: " +
-                $"instance={roomIdentity.Instance.PartyDungeonInstanceId} " +
-                $"room={roomIdentity.RoomInstanceId} generation={generation} " +
-                $"ready={timeout.ReadyParticipants.Count} " +
-                $"missing={timeout.MissingParticipants.Count}");
-
-            var sessions = _worldDependencies.Sessions;
-            var missingCandidates = new List<(
-                EnhancedClientSession Session,
-                DungeonRunIdentity RunIdentity,
-                int CharacterId)>();
-            var instanceRoster = _dungeonInstances
-                .CaptureInstanceParticipantRoster(roomIdentity.Instance);
-            foreach (var participant in instanceRoster)
-            {
-                if (!ContainsRunIdentity(
-                        timeout.MissingParticipants,
-                        participant.RunIdentity)
-                    || !sessions.TryGet(
-                        participant.CharacterId,
-                        out var candidate)
-                    || candidate?.Player == null
-                    || !candidate.Player.IsCurrentDungeonRun(
-                        participant.RunIdentity))
-                {
-                    continue;
-                }
-
-                var candidateRun = candidate.Player.CurrentRun;
-                if (candidateRun != null
-                    && candidateRun.TryCancelLoadingProjection(
-                        timeout.ProjectionId))
-                {
-                    missingCandidates.Add((
-                        candidate,
-                        participant.RunIdentity,
-                        participant.CharacterId));
-                }
-            }
-
-            // Cancel stale producers synchronously, then commit survivor
-            // progress before cleanup touches storage or a failed socket.
-            if (timeout.Released)
-            {
-                await SendDungeonLoadingCompletionAsync(
-                    roomIdentity,
-                    timeout.ReadyParticipants,
-                    "timeout");
-            }
-
-            foreach (var missing in missingCandidates)
-            {
-                var candidate = missing.Session;
-                var candidateRun = candidate?.Player?.CurrentRun;
-                if (candidateRun == null
-                    || !candidate.Player.IsCurrentDungeonRun(
-                        missing.RunIdentity)
-                    || !candidateRun.IsLoadingProjectionCanceled(
-                        timeout.ProjectionId))
-                {
-                    continue;
-                }
-
-                try
-                {
-                    await HandleGiveupGame(
-                        candidate,
-                        new GamePacketHeader
-                        {
-                            cmd = 0x01,
-                            type = 0x002A,
-                        },
-                        Array.Empty<byte>());
-                }
-                catch (Exception ex)
-                {
-                    FileLogger.Log(
-                        $"[GameProtocol] DUNGEON_LOAD missing cleanup failed: " +
-                        $"cid={missing.CharacterId} " +
-                        $"instance={roomIdentity.Instance.PartyDungeonInstanceId} " +
-                        $"room={roomIdentity.RoomInstanceId} " +
-                        $"error={ex.Message}");
-                }
-            }
-        }
-
-        private static bool ContainsRunIdentity(
-            IReadOnlyList<DungeonRunIdentity> participants,
-            DungeonRunIdentity candidate)
-        {
-            if (participants == null)
-                return false;
-            for (var i = 0; i < participants.Count; i++)
-            {
-                if (participants[i].Equals(candidate))
-                    return true;
-            }
-            return false;
-        }
-
         private async Task HandleRaidAwareCharacterDeath(
             EnhancedClientSession session,
             GamePacketHeader header,
@@ -969,6 +643,8 @@ namespace DfoServer.Network
             d[0x0010] = _dungeonHandler.Handle_ENUM_CMDPACKET_SELECT_DUNGEON;
             d[(ushort)CmdPacketTypeA21.REQUEST_CIRCLE_ENTER] =
                 _dungeonHandler.Handle_ENUM_CMDPACKET_REQUEST_CIRCLE_ENTER;
+            d[(ushort)CmdPacketTypeA21.SEQUENTIAL_DUNGEON_INFO] =
+                _dungeonHandler.Handle_ENUM_CMDPACKET_SEQUENTIAL_DUNGEON_INFO;
             d[(ushort)CmdPacketTypeA21.DIE_MONSTER] = _dungeonHandler.Handle_ENUM_CMDPACKET_DIE_MONSTER;
             d[0x0028] = HandleRaidAwareCharacterDeath;       //40
             d[0x0029] = HandleRaidAwareUseCoin;
@@ -1037,8 +713,9 @@ namespace DfoServer.Network
                 await _townHandler.Handle_ENUM_CMDPACKET_SET_USER_AREA(s, h, b);
                 await _expertJobStoreHandler.SendAreaStoresToAsync(s);
             };
-            d[(ushort)CmdPacketTypeA21.FINISH_LOADING] = HandleRaidAwareFinishLoading;
-            d[0x002A] = HandleGiveupGame;
+            d[(ushort)CmdPacketTypeA21.FINISH_LOADING] =
+                _dungeonLoading.HandleFinishLoadingAsync;
+            d[0x002A] = _dungeonLoading.HandleGiveupGameAsync;
             d[0x0084] = (s, h, b) => HandleRaidAwareDungeonExit(s, h, b, _townHandler.Handle_ENUM_CMDPACKET_GIVEUP_GAME, "back-to-village");
             d[0x00ED] = _townHandler.Handle_ENUM_CMDPACKET_TELEPORT;
             d[(ushort)CmdPacketTypeA21.GET_PCROOM_TIME_POINT_ITEM] =

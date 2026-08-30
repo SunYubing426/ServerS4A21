@@ -1098,6 +1098,10 @@ namespace DfoServer.Network.Handlers
                         session,
                         projectionGuard);
                 }
+                // 回城过图后客户端重置结婚属性 UI：城镇 USER_STATE/USER_AREA
+                // 投影之后补发婚礼回放三包。只覆盖进/出本触发点，
+                // 不挂城镇内每次过图。
+                await InventoryRefreshSender.SendWeddingReplayRefresh(session);
                 return CanContinueTownProjection(
                     session,
                     projectionGuard);

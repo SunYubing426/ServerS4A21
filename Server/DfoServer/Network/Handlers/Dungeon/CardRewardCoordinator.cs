@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using DfoServer.Game.Dungeon;
 using DfoServer.Game.Inventory;
 using DfoServer.Game.Session;
+using DfoServer.Game.Premium;
 using DfoServer.Infrastructure;
 
 namespace DfoServer.Network.Handlers.Dungeon
@@ -28,15 +29,18 @@ namespace DfoServer.Network.Handlers.Dungeon
         private readonly CardRewardService _application;
         private readonly ICardRewardNotificationSender _sender;
         private readonly ISessionDirectory _sessions;
+        private readonly IGameDatabase _database;
 
         internal CardRewardCoordinator(
             CardRewardService application = null,
             ICardRewardNotificationSender sender = null,
-            ISessionDirectory sessions = null)
+            ISessionDirectory sessions = null,
+            IGameDatabase database = null)
         {
             _application = application ?? new CardRewardService();
             _sender = sender ?? new CardRewardNotificationSender();
             _sessions = sessions;
+            _database = database;
         }
 
         internal void ScheduleAutoFlow(
@@ -398,6 +402,14 @@ namespace DfoServer.Network.Handlers.Dungeon
                     await _sender.SendItemUpdatesAsync(
                         session,
                         result.Changes);
+                    if (result.ConsumedGoldCardContractUse)
+                    {
+                        var database = _database ?? lease.Inventory.Database;
+                        await PremiumService.SendPremiumServiceRefresh(
+                            session,
+                            session.Account?.AccountId ?? 0,
+                            database);
+                    }
                 }
                 catch (Exception ex)
                 {

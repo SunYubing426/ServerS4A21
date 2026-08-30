@@ -10,6 +10,7 @@ using DfoServer.Network.Handlers.Dungeon;
 using DfoServer.Network.Parsers.Party;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace DfoServer.SelfTests
 {
@@ -138,6 +139,127 @@ namespace DfoServer.SelfTests
                 && BitConverter.ToUInt16(replacedPartyList, 5)
                     == secondListedParty.PartyId
                 && replacedPartyList[7] == 0,
+                ref failures);
+            var threeMemberP2pParty = new Party(5)
+            {
+                LeaderUserId = 10041,
+            };
+            threeMemberP2pParty.TryAddMember(new PartyMember
+            {
+                UserId = 10041,
+                CharacterId = 10041,
+                SessionId = Guid.NewGuid(),
+                Name = "p2p-leader",
+                IpBytes = new byte[] { 127, 0, 0, 1 },
+                P2pPort = 0x1234,
+            });
+            threeMemberP2pParty.TryAddMember(new PartyMember
+            {
+                UserId = 10042,
+                CharacterId = 10042,
+                SessionId = Guid.NewGuid(),
+                Name = "p2p-second",
+                IpBytes = new byte[] { 127, 0, 0, 1 },
+                P2pPort = 0x5678,
+            });
+            threeMemberP2pParty.TryAddMember(new PartyMember
+            {
+                UserId = 10043,
+                CharacterId = 10043,
+                SessionId = Guid.NewGuid(),
+                Name = "p2p-third",
+                IpBytes = new byte[] { 127, 0, 0, 1 },
+                P2pPort = 0x9ABC,
+            });
+            var directP2pProjection =
+                PartyHandler.BuildDirectP2pProjectionPackets(
+                    threeMemberP2pParty);
+            var directEndpointPacket = directP2pProjection[0];
+            var directRealtimePacket = directP2pProjection[1];
+            var threeMemberContextPlan =
+                PartyHandler.BuildPartyFormationContextPlan(
+                    threeMemberP2pParty.MembersBySlot());
+            Check(
+                "three-member formation fans out six peer contexts and keeps reusable endpoint bytes for both phases",
+                directP2pProjection.Length == 2
+                && threeMemberContextPlan.Count == 6
+                && threeMemberContextPlan.All(
+                    pair => pair.RecipientUid != pair.SourceUid)
+                && threeMemberContextPlan.Any(
+                    pair => pair.RecipientUid == 10041
+                        && pair.SourceUid == 10043)
+                && threeMemberContextPlan.Any(
+                    pair => pair.RecipientUid == 10043
+                        && pair.SourceUid == 10041)
+                && BitConverter.ToUInt16(directEndpointPacket, 1) == 0x000B
+                && BitConverter.ToUInt16(directRealtimePacket, 1) == 0x0099
+                && directEndpointPacket.Length == 82
+                && directEndpointPacket[15] == 3
+                && BitConverter.ToUInt16(directEndpointPacket, 16) == 10041
+                && directEndpointPacket[18] == 127
+                && directEndpointPacket[19] == 0
+                && directEndpointPacket[20] == 0
+                && directEndpointPacket[21] == 1
+                && directEndpointPacket[26] == 0x12
+                && directEndpointPacket[27] == 0x34
+                && BitConverter.ToUInt16(directEndpointPacket, 38) == 10042
+                && directEndpointPacket[40] == 127
+                && directEndpointPacket[41] == 0
+                && directEndpointPacket[42] == 0
+                && directEndpointPacket[43] == 1
+                && directEndpointPacket[48] == 0x56
+                && directEndpointPacket[49] == 0x78
+                && BitConverter.ToUInt16(directEndpointPacket, 60) == 10043
+                && directEndpointPacket[62] == 127
+                && directEndpointPacket[63] == 0
+                && directEndpointPacket[64] == 0
+                && directEndpointPacket[65] == 1
+                && directEndpointPacket[70] == 0x9A
+                && directEndpointPacket[71] == 0xBC
+                && directRealtimePacket.Length == 31
+                && directRealtimePacket[15] == 3,
+                ref failures);
+            threeMemberP2pParty.TryAddMember(new PartyMember
+            {
+                UserId = 10044,
+                CharacterId = 10044,
+                SessionId = Guid.NewGuid(),
+                Name = "p2p-fourth",
+                IpBytes = new byte[] { 127, 0, 0, 1 },
+                P2pPort = 0xDEF0,
+            });
+            var fourMemberP2pProjection =
+                PartyHandler.BuildDirectP2pProjectionPackets(
+                    threeMemberP2pParty);
+            var fourMemberEndpointPacket = fourMemberP2pProjection[0];
+            var fourMemberRealtimePacket = fourMemberP2pProjection[1];
+            var fourMemberContextPlan =
+                PartyHandler.BuildPartyFormationContextPlan(
+                    threeMemberP2pParty.MembersBySlot());
+            Check(
+                "four-member formation fans out twelve peer contexts and preserves reusable endpoint bytes for both phases",
+                fourMemberContextPlan.Count == 12
+                && fourMemberContextPlan.All(
+                    pair => pair.RecipientUid != pair.SourceUid)
+                && fourMemberContextPlan.Any(
+                    pair => pair.RecipientUid == 10041
+                        && pair.SourceUid == 10044)
+                && fourMemberContextPlan.Any(
+                    pair => pair.RecipientUid == 10044
+                        && pair.SourceUid == 10041)
+                && fourMemberEndpointPacket.Length == 104
+                && fourMemberEndpointPacket[15] == 4
+                && BitConverter.ToUInt16(
+                    fourMemberEndpointPacket,
+                    82) == 10044
+                && fourMemberEndpointPacket[84] == 127
+                && fourMemberEndpointPacket[85] == 0
+                && fourMemberEndpointPacket[86] == 0
+                && fourMemberEndpointPacket[87] == 1
+                && fourMemberEndpointPacket[92] == 0xDE
+                && fourMemberEndpointPacket[93] == 0xF0
+                && fourMemberRealtimePacket.Length == 36
+                && fourMemberRealtimePacket[15] == 4,
                 ref failures);
             var capturedEdit = new byte[]
             {

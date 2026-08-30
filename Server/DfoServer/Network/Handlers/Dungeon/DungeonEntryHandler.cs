@@ -338,6 +338,50 @@ namespace DfoServer.Network.Handlers.Dungeon
                 responseBody));
         }
 
+        // A21: 客户端进入副本选择界面后会用 CMD SEQUENTIAL_DUNGEON_INFO(0x035D)
+        // 询问当前区域的连续副本序列进度(抓包: body = int32 configKey,
+        // 镇魂/远古区域 key=26)。之前服务端未注册该 CMD, 客户端拿不到应答会
+        // 反复重发并卡死选择界面。这里始终按请求的 key 应答
+        // NOTI SEQUENTIAL_DUNGEON_INFO(0x025B, int32 key + byte progress +
+        // int32 routeMask, 与既有主动推送同布局); 无对应序列或无进度记录时
+        // progress 按 0(未开始)应答。
+        internal async Task HandleSequentialDungeonInfo(
+            EnhancedClientSession session,
+            GamePacketHeader header,
+            byte[] body)
+        {
+            if (body == null || body.Length < sizeof(int))
+            {
+                FileLogger.Log(
+                    $"[{DungeonSharedServices.ProtocolLogName}] " +
+                    $"SEQUENTIAL_DUNGEON_INFO rejected: invalid body " +
+                    $"length={body?.Length ?? 0} expected={sizeof(int)}");
+                return;
+            }
+            var player = session?.Player;
+            if (player == null || player.CharacterId <= 0)
+            {
+                FileLogger.Log(
+                    $"[{DungeonSharedServices.ProtocolLogName}] " +
+                    "SEQUENTIAL_DUNGEON_INFO rejected: missing active character");
+                return;
+            }
+
+            var configKey = BitConverter.ToInt32(body, 0);
+            var progress = _svc.PersistentMechanisms.ResolveSequentialProgress(
+                player.CharacterId,
+                configKey);
+            await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
+                0x00,
+                (ushort)NotiPacketTypeA21.SEQUENTIAL_DUNGEON_INFO,
+                DungeonNotificationBuilder.BuildSequentialDungeonInfo(
+                    configKey, progress, 0)));
+            FileLogger.Log(
+                $"[{DungeonSharedServices.ProtocolLogName}] " +
+                $"SEQUENTIAL_DUNGEON_INFO answered: " +
+                $"cid={player.CharacterId} key={configKey} progress={progress}");
+        }
+
         internal async Task HandleEnterSelectDungeon(EnhancedClientSession session, GamePacketHeader header, byte[] body)
         {
             if (!EnterSelectDungeonRequest.TryParse(body, out var request))
@@ -682,6 +726,10 @@ namespace DfoServer.Network.Handlers.Dungeon
                 }
                 await _svc.GrowthCapsuleSync.SendExpProgressAsync(
                     session, "enter-select-dungeon", honor: honorSummary);
+                // 进本过图后客户端重置结婚属性 UI：USERINFO subtype1/
+                // USER_STATE 投影之后补发婚礼回放三包。只覆盖进/出本
+                // 触发点，不挂城镇内每次过图。
+                await InventoryRefreshSender.SendWeddingReplayRefresh(session);
                 if (!selection.TryCompletePartyProjection())
                 {
                     FileLogger.Log(
@@ -1600,6 +1648,7 @@ namespace DfoServer.Network.Handlers.Dungeon
             }
 
             var req = Network.Parsers.Dungeon.SelectDungeonRequest.Parse(body);
+            var entryLimitDungeonId = req.DungeonId;
             try
             {
                 var resolvedDungeonId = _svc.TowerOfDespairProgress.ResolveEntryDungeonId(
@@ -1607,6 +1656,7 @@ namespace DfoServer.Network.Handlers.Dungeon
                     req.DungeonId);
                 if (resolvedDungeonId != req.DungeonId)
                 {
+                    entryLimitDungeonId = req.DungeonId;
                     FileLogger.Log($"[{DungeonSharedServices.ProtocolLogName}] TOWER_OF_DESPAIR_ENTRY: cid={session.Player.CharacterId} requested={req.DungeonId} resolved={resolvedDungeonId}");
                     req = new Network.Parsers.Dungeon.SelectDungeonRequest(
                         resolvedDungeonId,
@@ -1779,6 +1829,15 @@ namespace DfoServer.Network.Handlers.Dungeon
                     entryParty,
                     _svc.Sessions,
                     entryPartyMemberCount);
+            var isDimensionDungeon = DungeonData.IsDimensionDungeon(req.DungeonId);
+            if (!await TryValidateEntryLimitAsync(
+                    session,
+                    header.type,
+                    entryLimitDungeonId,
+                    isDimensionDungeon))
+            {
+                return;
+            }
 
             // 塔类副本分流: dungeonKind==1 走专属流程(NOTI 142+143, 非普通副本的 START_MAP)
             if (_svc.DeathTower.TryCreateSession(req.DungeonId, out var tower))
@@ -1850,6 +1909,15 @@ namespace DfoServer.Network.Handlers.Dungeon
                         ResolveEntryAdmissionReject(
                             towerEntryCost,
                             ResolvePartySlot(session)));
+                    return;
+                }
+                if (!await TryConsumeEntryLimitAsync(
+                        session,
+                        header.type,
+                        towerRun,
+                        entryLimitDungeonId,
+                        isDimensionDungeon))
+                {
                     return;
                 }
                 RegisterActiveParticipant(session, towerRun);
@@ -2128,6 +2196,33 @@ namespace DfoServer.Network.Handlers.Dungeon
                     DungeonAdmissionReject.InvalidSelectionState,
                     "leader_changed_after_cost_commit");
                 return;
+            }
+            if (!await TryConsumeEntryLimitAsync(
+                    session,
+                    header.type,
+                    run,
+                    entryLimitDungeonId,
+                    isDimensionDungeon))
+            {
+                await ReturnPreparedPartyRunsToTownAsync(
+                    session,
+                    header.type,
+                    partyEntryPlans,
+                    DungeonAdmissionReject.DailyEntryLimitReached,
+                    "leader_entry_limit_consume_failed",
+                    sendAdmissionReject: false);
+                return;
+            }
+            var consumedDungeonBuffUse = _svc.DevilContracts.TryConsume(
+                session.Player.CharacterId,
+                session.Account?.AccountId ?? 0,
+                Game.Premium.DevilContractUsagePolicy.DungeonBuffSlot);
+            if (consumedDungeonBuffUse)
+            {
+                FileLogger.Log(
+                    $"[{DungeonSharedServices.ProtocolLogName}] " +
+                    "DEVIL_CONTRACT_DUNGEON_BUFF: consumed " +
+                    $"cid={session.Player.CharacterId} dungeon={run.DungeonId}");
             }
             if (_publishTownPartyLists != null)
                 await _publishTownPartyLists();
@@ -3354,7 +3449,8 @@ namespace DfoServer.Network.Handlers.Dungeon
             ushort wireType,
             IReadOnlyList<PartyEntryAdmissionPlan> plans,
             DungeonAdmissionReject rejection,
-            string reason)
+            string reason,
+            bool sendAdmissionReject = true)
         {
             var ended = new List<(EnhancedClientSession Session,
                 DungeonRunIdentity Identity,
@@ -3410,19 +3506,22 @@ namespace DfoServer.Network.Handlers.Dungeon
                 entry.Session.Player.UserState = 0x00;
             }
             leader?.Player?.ClearPendingPartyRetryEntry();
-            try
+            if (sendAdmissionReject)
             {
-                await _svc.AdmissionRejects.SendAsync(
-                    leader,
-                    wireType,
-                    rejection);
-            }
-            catch (Exception ex)
-            {
-                FileLogger.Log(
-                    $"[{DungeonSharedServices.ProtocolLogName}] " +
-                    $"party entry rejection projection failed cid=" +
-                    $"{leader?.Player?.CharacterId ?? 0}: {ex.Message}");
+                try
+                {
+                    await _svc.AdmissionRejects.SendAsync(
+                        leader,
+                        wireType,
+                        rejection);
+                }
+                catch (Exception ex)
+                {
+                    FileLogger.Log(
+                        $"[{DungeonSharedServices.ProtocolLogName}] " +
+                        $"party entry rejection projection failed cid=" +
+                        $"{leader?.Player?.CharacterId ?? 0}: {ex.Message}");
+                }
             }
             foreach (var entry in ended)
             {
@@ -3447,6 +3546,224 @@ namespace DfoServer.Network.Handlers.Dungeon
                 $"leader={leader?.Player?.CharacterId ?? 0} " +
                 $"returned={ended.Count}/{plans?.Count ?? 0} " +
                 $"reason={reason}");
+        }
+
+        private async Task<bool> TryValidateEntryLimitAsync(
+            EnhancedClientSession session,
+            ushort wireType,
+            int entryLimitDungeonId,
+            bool isDimensionDungeon)
+        {
+            var characterId = session?.Player?.CharacterId ?? 0;
+            var accountId = session?.Account?.AccountId ?? 0;
+            if (characterId <= 0 || accountId <= 0)
+            {
+                await _svc.AdmissionRejects.SendAsync(
+                    session,
+                    wireType,
+                    DungeonAdmissionReject.InvalidSelectionState);
+                return false;
+            }
+
+            if (isDimensionDungeon)
+            {
+                var config = DimensionGateEntryLimitConfigProvider.Get();
+                if (!_svc.EntryLimits.TryCheckDimensionGateLimit(
+                        characterId,
+                        config.DailyDefaultEnterCount,
+                        config.DailyDefaultExtraEnterCount,
+                        1,
+                        out var dimensionResult)
+                    || dimensionResult?.Allowed != true)
+                {
+                    FileLogger.Log(
+                        $"[{DungeonSharedServices.ProtocolLogName}] " +
+                        $"SELECT_DUNGEON dimension entry limit rejected: " +
+                        $"cid={characterId} dungeon={entryLimitDungeonId} " +
+                        $"current={dimensionResult?.CurrentCount ?? 0} " +
+                        $"extra={dimensionResult?.ExtraCount ?? 0} " +
+                        $"used={dimensionResult?.UsedCount ?? 0} " +
+                        $"reason={dimensionResult?.Reason ?? "unknown"}");
+                    await _svc.AdmissionRejects.SendAsync(
+                        session,
+                        wireType,
+                        DungeonAdmissionReject.DailyEntryLimitReached);
+                    return false;
+                }
+
+                return true;
+            }
+
+            if (!_svc.EntryLimits.TryCheckSpecialDungeonLimit(
+                    accountId,
+                    characterId,
+                    entryLimitDungeonId,
+                    1,
+                    out var result)
+                || result?.Allowed != true)
+            {
+                FileLogger.Log(
+                    $"[{DungeonSharedServices.ProtocolLogName}] " +
+                    $"SELECT_DUNGEON entry limit rejected: " +
+                    $"aid={accountId} cid={characterId} " +
+                    $"dungeon={entryLimitDungeonId} " +
+                    $"current={result?.CurrentCount ?? 0} " +
+                    $"extra={result?.ExtraCount ?? 0} " +
+                    $"used={result?.UsedCount ?? 0} " +
+                    $"reason={result?.Reason ?? "unknown"}");
+                await _svc.AdmissionRejects.SendAsync(
+                    session,
+                    wireType,
+                    DungeonAdmissionReject.DailyEntryLimitReached);
+                return false;
+            }
+
+            return true;
+        }
+
+        private async Task<bool> TryConsumeEntryLimitAsync(
+            EnhancedClientSession session,
+            ushort wireType,
+            DungeonRun run,
+            int entryLimitDungeonId,
+            bool isDimensionDungeon)
+        {
+            var characterId = session?.Player?.CharacterId ?? 0;
+            var accountId = session?.Account?.AccountId ?? 0;
+            if (characterId <= 0 || accountId <= 0)
+            {
+                await RejectEntryLimitAsync(
+                    session,
+                    wireType,
+                    run,
+                    DungeonAdmissionReject.InvalidSelectionState);
+                return false;
+            }
+
+            if (isDimensionDungeon)
+            {
+                var config = DimensionGateEntryLimitConfigProvider.Get();
+                if (!_svc.EntryLimits.TryConsumeDimensionGateLimit(
+                        characterId,
+                        config.DailyDefaultEnterCount,
+                        config.DailyDefaultExtraEnterCount,
+                        1,
+                        out var dimensionResult)
+                    || dimensionResult?.Allowed != true)
+                {
+                    FileLogger.Log(
+                        $"[{DungeonSharedServices.ProtocolLogName}] " +
+                        $"SELECT_DUNGEON dimension entry consume rejected: " +
+                        $"cid={characterId} dungeon={entryLimitDungeonId} " +
+                        $"current={dimensionResult?.CurrentCount ?? 0} " +
+                        $"extra={dimensionResult?.ExtraCount ?? 0} " +
+                        $"used={dimensionResult?.UsedCount ?? 0} " +
+                        $"reason={dimensionResult?.Reason ?? "unknown"}");
+                    await RejectEntryLimitAsync(
+                        session,
+                        wireType,
+                        run,
+                        DungeonAdmissionReject.DailyEntryLimitReached);
+                    return false;
+                }
+
+                await SendDimensionGateEntranceInfoAsync(
+                    session,
+                    dimensionResult.CurrentCount,
+                    dimensionResult.ExtraCount);
+                FileLogger.Log(
+                    $"[{DungeonSharedServices.ProtocolLogName}] " +
+                    $"SELECT_DUNGEON dimension entry consumed: " +
+                    $"cid={characterId} dungeon={entryLimitDungeonId} " +
+                    $"current={dimensionResult.CurrentCount} " +
+                    $"extra={dimensionResult.ExtraCount} " +
+                    $"used={dimensionResult.UsedCount}");
+                return true;
+            }
+
+            if (!_svc.EntryLimits.TryConsumeSpecialDungeonLimit(
+                    accountId,
+                    characterId,
+                    entryLimitDungeonId,
+                    1,
+                    out var result)
+                || result?.Allowed != true)
+            {
+                FileLogger.Log(
+                    $"[{DungeonSharedServices.ProtocolLogName}] " +
+                    $"SELECT_DUNGEON entry limit consume rejected: " +
+                    $"aid={accountId} cid={characterId} " +
+                    $"dungeon={entryLimitDungeonId} " +
+                    $"current={result?.CurrentCount ?? 0} " +
+                    $"extra={result?.ExtraCount ?? 0} " +
+                    $"used={result?.UsedCount ?? 0} " +
+                    $"reason={result?.Reason ?? "unknown"}");
+                await RejectEntryLimitAsync(
+                    session,
+                    wireType,
+                    run,
+                    DungeonAdmissionReject.DailyEntryLimitReached);
+                return false;
+            }
+
+            if (result.IsLimited)
+            {
+                FileLogger.Log(
+                    $"[{DungeonSharedServices.ProtocolLogName}] " +
+                    $"SELECT_DUNGEON entry limit consumed: " +
+                    $"aid={accountId} cid={characterId} " +
+                    $"dungeon={entryLimitDungeonId} " +
+                    $"current={result.CurrentCount} " +
+                    $"extra={result.ExtraCount} " +
+                    $"used={result.UsedCount}");
+            }
+
+            return true;
+        }
+
+        private async Task RejectEntryLimitAsync(
+            EnhancedClientSession session,
+            ushort wireType,
+            DungeonRun run,
+            DungeonAdmissionReject rejection)
+        {
+            if (run?.RunState == DungeonRunState.Active)
+            {
+                var identity = run.CaptureIdentity();
+                await DungeonRunLifecycle.EndRunAsync(
+                    session,
+                    DungeonRunEndReason.EntryRejected,
+                    identity,
+                    _svc.InstanceRegistry);
+                await _svc.AdmissionRejects.SendAsync(
+                    session,
+                    wireType,
+                    rejection);
+                return;
+            }
+
+            await RejectEntryAdmissionAsync(
+                session,
+                wireType,
+                run,
+                rejection);
+        }
+
+        private static Task SendDimensionGateEntranceInfoAsync(
+            EnhancedClientSession session,
+            int remainingCount,
+            int extraCount)
+        {
+            if (session == null)
+                return Task.CompletedTask;
+
+            return session.SendPacketAsync(
+                GamePacketEnvelopeBuilder.Build(
+                    0x00,
+                    (ushort)NotiPacketTypeA21.DIMENSION_GATE_ENTRANCE_INFO,
+                    DimensionGateEntranceInfoBodyBuilder.Build(
+                        remainingCount,
+                        extraCount)));
         }
 
         private async Task RejectEntryAdmissionAsync(
