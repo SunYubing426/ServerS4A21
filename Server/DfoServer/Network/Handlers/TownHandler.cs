@@ -53,6 +53,16 @@ namespace DfoServer.Network.Handlers
         private readonly DungeonInstanceRegistry _dungeonInstances;
         private readonly Game.Raid.RaidManager _raidManager;
         private readonly IGameDatabase _database;
+        // 放弃(0x2A)即离队钩子(最小移植自 MR !22): 回城成功后由
+        // PartyHandler 提交放弃者离队并通知留守成员重建名册。
+        private Func<EnhancedClientSession, ushort, Guid, int, Task>
+            _dungeonGiveupPartyDeparture;
+
+        internal void ConfigureDungeonGiveupPartyDeparture(
+            Func<EnhancedClientSession, ushort, Guid, int, Task> handler)
+        {
+            _dungeonGiveupPartyDeparture = handler;
+        }
 
         private readonly InventoryRefreshSender _refresh;
 
@@ -793,6 +803,26 @@ namespace DfoServer.Network.Handlers
                 return;
             }
 
+            // ★中途放弃即离队(最小移植自 MR !22): EndRun 前先快照队伍归属,
+            //   回城成功后经 PartyHandler 钩子提交本人离队 —— 否则留守成员的
+            //   队伍窗口/副本联机投影里, 放弃者会残留成"还在副本"。
+            var giveupExpectedUserId = header.type == 0x002A
+                ? (session?.Player?.UserId ?? (ushort)0)
+                : (ushort)0;
+            var giveupExpectedSessionId = session?.SessionId ?? Guid.Empty;
+            var giveupExpectedPartyId = 0;
+            if (giveupExpectedUserId != 0 && _partyManager != null)
+            {
+                var giveupLiveParty = _partyManager.GetPartyByUser(
+                    giveupExpectedUserId);
+                var giveupMember = giveupLiveParty?.GetMember(
+                    giveupExpectedUserId);
+                if (giveupLiveParty != null
+                    && giveupLiveParty.Count > 1
+                    && giveupMember?.SessionId == giveupExpectedSessionId)
+                    giveupExpectedPartyId = giveupLiveParty.PartyId;
+            }
+
             var sourceRunIdentity = sourceRun.CaptureIdentity();
             var deferTutorialVillageObjectList = sourceRun.IsA21TutorialEntry;
             var runGuard = TownProjectionGuard.ForEndedRun(sourceRunIdentity);
@@ -822,8 +852,9 @@ namespace DfoServer.Network.Handlers
             }
 
             // ★跟随退出(item17)只在【通关回城 BACK_2_VILLAGE 0x84】触发: 副本结束队长回城 → 队员跟随。
-            //   ⚠️【放弃 GIVEUP_GAME 0x2A = 未完成中途退出】绝不 fan-out:
-            //     放弃者独自回城、【留队】; 其余队员【继续留在副本、留队】(真机确认的正确语义)。
+            //   【放弃 GIVEUP_GAME 0x2A = 未完成中途退出】绝不 fan-out:
+            //     放弃者独自回城、不拉仍在副本的队员; 回城成功后提交本人离队,
+            //     留守成员经名册广播重建(最小移植自 MR !22 的放弃即离队语义)。
             //   0x2A/0x84 同路由到本 handler, 靠 header.type 区分。
             if (header.type == 0x0084)
                 await TryFanOutLeaderReturnToTownAsync(
@@ -831,7 +862,25 @@ namespace DfoServer.Network.Handlers
                     header,
                     sourceRunIdentity);
             else
-                FileLogger.Log($"[{ProtocolName}] GIVEUP_GAME(type=0x{header.type:X2}): 未完成放弃退出, cid={session.Player?.CharacterId} 独自回城留队, 不拉队员(其余留本)");
+            {
+                FileLogger.Log($"[{ProtocolName}] GIVEUP_GAME(type=0x{header.type:X2}): 未完成放弃退出, cid={session.Player?.CharacterId} 独自回城, 提交离队(不拉队员, 其余留本)");
+                if (_dungeonGiveupPartyDeparture != null
+                    && giveupExpectedPartyId > 0)
+                {
+                    try
+                    {
+                        await _dungeonGiveupPartyDeparture(
+                            session,
+                            giveupExpectedUserId,
+                            giveupExpectedSessionId,
+                            giveupExpectedPartyId);
+                    }
+                    catch (Exception ex)
+                    {
+                        FileLogger.Log($"[{ProtocolName}] post-EndRun party policy failed: cid={session.Player?.CharacterId ?? 0} error={ex.Message}");
+                    }
+                }
+            }
 
             // A21 CMD 成功响应已在 USER_STATE 之前发送；回城尾部不再追加
             // 第二个 ACK 或 subtype0。客户端随后继续发送教程
@@ -900,17 +949,34 @@ namespace DfoServer.Network.Handlers
                 session,
                 BuildTownAreaProjectionBody(session.Player),
                 projectionGuard);
-            if (!CanContinueTownProjection(session, projectionGuard))
-            {
-                return false;
-            }
-
-            // 回城过图后客户端重置结婚属性 UI：城镇 USER_STATE/USER_AREA 投影之后
-            // 补发婚礼回放三包（与选角序列同包体）。仅覆盖进/出本触发点，不挂城镇内每次过图。
-            await InventoryRefreshSender.SendWeddingReplayRefresh(session);
-            return CanContinueTownProjection(
+            var canContinue = CanContinueTownProjection(
                 session,
                 projectionGuard);
+            if (canContinue)
+                await InvokePartyWireTownRefresherAsync(session);
+            return canContinue;
+        }
+
+        // 副本回城完成后回调队伍侧: 队伍曾在副本内减员且名册未刷新(抑制窗口),
+        // 此刻若全员已回城则由 PartyHandler 用新 partyId 重建并广播。
+        // 客户端对减员 diff 收包即崩/清窗后同 id 不渲染(2026-08-27 实机取证)。
+        internal Func<EnhancedClientSession, Task> PartyWireTownRefresher { get; set; }
+
+        private async Task InvokePartyWireTownRefresherAsync(
+            EnhancedClientSession session)
+        {
+            if (PartyWireTownRefresher == null || session?.Player == null)
+                return;
+            try
+            {
+                await PartyWireTownRefresher(session);
+            }
+            catch (Exception ex)
+            {
+                FileLogger.Log(
+                    $"[{ProtocolName}] party wire town refresher failed: " +
+                    $"cid={session.Player.CharacterId} error={ex.Message}");
+            }
         }
 
         private async Task<bool> ReturnSelectionToTownAsync(
@@ -952,7 +1018,33 @@ namespace DfoServer.Network.Handlers
                 session,
                 BuildTownAreaProjectionBody(session.Player),
                 projectionGuard);
+            if (!CanContinueTownProjection(session, projectionGuard))
+            {
+                return false;
+            }
+
+            // 回城过图后客户端重置结婚属性 UI：城镇 USER_STATE/USER_AREA 投影之后
+            // 补发婚礼回放三包（与选角序列同包体）。仅覆盖进/出本触发点，不挂城镇内每次过图。
+            await InventoryRefreshSender.SendWeddingReplayRefresh(session);
             return CanContinueTownProjection(session, projectionGuard);
+        }
+
+        // ★城镇同屏投影(最小移植自 MR !22): 副本结算/跟随回城后, 由
+        // DungeonTownReturnCoordinator 回调进来, 走 SetUserAreaCoreAsync
+        // 同屏广播 —— 否则回城者不进城镇在场名单, 队友互相看不见。
+        internal async Task ProjectDungeonTownPresenceAsync(
+            EnhancedClientSession session,
+            DfoServer.Game.Dungeon.DungeonRunIdentity runIdentity)
+        {
+            var projectionGuard = TownProjectionGuard.ForEndedRun(runIdentity);
+            if (!CanContinueTownProjection(session, projectionGuard))
+                return;
+
+            await SetUserAreaCoreAsync(
+                session,
+                BuildTownAreaProjectionBody(session.Player),
+                projectionGuard);
+            await InvokePartyWireTownRefresherAsync(session);
         }
 
         private static byte[] BuildTownAreaProjectionBody(PlayerContext player)
