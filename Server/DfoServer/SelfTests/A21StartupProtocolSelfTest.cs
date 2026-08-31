@@ -3,8 +3,10 @@ using DfoServer.Game.Characters;
 using DfoServer.Game.ExpertJob;
 using DfoServer.Game.Quests;
 using DfoServer.Game.SelectCharacter;
+using DfoServer.Game.Session;
 using DfoServer.Network;
 using DfoServer.Network.Builders;
+using DfoServer.Network.Handlers;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -164,6 +166,68 @@ namespace DfoServer.SelfTests
                 "A21 ASK uses the same advertised address",
                 Encoding.ASCII.GetString(channelList).Contains("127.0.0.2"),
                 ref failures);
+
+            var previousChannelSession = new EnhancedClientSession(
+                null,
+                new GamePacketHeader(),
+                GameNetworkConfig.NormalGamePort);
+            var rejectedChannelSession = new EnhancedClientSession(
+                null,
+                new GamePacketHeader(),
+                GameNetworkConfig.Channel100GamePort);
+            var admissionSessions = new SessionDirectory();
+            admissionSessions.Register(70001, previousChannelSession);
+            var admissionCharacter = new CharacterRecord
+            {
+                CharacterId = 70001,
+                Level = 19
+            };
+            var admissionFallback = CharacterSessionLifecycleCoordinator
+                .ResolveChannelAdmissionFallback(
+                    admissionSessions,
+                    rejectedChannelSession,
+                    admissionCharacter);
+            Check(
+                "level-rejected channel entry resolves the previous valid channel without changing the rejected connection identity",
+                admissionFallback == GameNetworkConfig.NormalGamePort
+                && rejectedChannelSession.ListenerPort
+                    == GameNetworkConfig.Channel100GamePort,
+                ref failures);
+            CharacterSessionLifecycleCoordinator
+                .ResetAcceptedChannelsForSelfTest();
+            CharacterSessionLifecycleCoordinator.RecordAcceptedChannel(
+                admissionCharacter.CharacterId,
+                GameNetworkConfig.NormalGamePort);
+            Check(
+                "level-rejected channel entry remembers the last accepted channel after the old session is gone",
+                CharacterSessionLifecycleCoordinator
+                    .ResolveChannelAdmissionFallback(
+                        new SessionDirectory(),
+                        rejectedChannelSession,
+                        admissionCharacter)
+                    == GameNetworkConfig.NormalGamePort,
+                ref failures);
+            var admissionMove = CharacterSessionLifecycleCoordinator
+                .BuildChannelAdmissionMovePacket(
+                    GameNetworkConfig.NormalGamePort);
+            Check(
+                "level-rejected channel entry waits three seconds then emits the captured 17-byte channel-move layout",
+                CharacterSessionLifecycleCoordinator
+                    .ChannelAdmissionReturnDelay == TimeSpan.FromSeconds(3)
+                && admissionMove.Length == 32
+                && admissionMove[0] == 0x00
+                && BitConverter.ToUInt16(admissionMove, 1)
+                    == (ushort)NotiPacketTypeA21.CHANNEL_MOVE_FOR_MATCHING
+                && admissionMove[15] == GameNetworkConfig.NormalChannelIndex
+                && BitConverter.ToInt32(admissionMove, 16) == 0
+                && admissionMove.Skip(20).Take(4)
+                    .SequenceEqual(new byte[] { 127, 0, 0, 2 })
+                && BitConverter.ToInt32(admissionMove, 24)
+                    == GameNetworkConfig.NormalGamePort
+                && BitConverter.ToInt32(admissionMove, 28) == 0,
+                ref failures);
+            CharacterSessionLifecycleCoordinator
+                .ResetAcceptedChannelsForSelfTest();
 
             var userInfo0 = UserInfoSubtype0Builder.BuildNotificationBody(
                 new CharacterRecord
