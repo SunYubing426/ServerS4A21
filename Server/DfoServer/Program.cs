@@ -35,10 +35,15 @@ namespace DfoServer
             ("--selftest-daily-reset-account", SelfTests.DailyResetAccountSelfTest.Run),
             ("--selftest-a21-daily-challenge", SelfTests.A21DailyChallengeSelfTest.Run),
             ("--selftest-a21-joust-event", SelfTests.A21JoustEventSelfTest.Run),
+            ("--selftest-a21-pcroom-timepoint-event", SelfTests.A21PcRoomTimePointEventSelfTest.Run),
+            ("--selftest-a21-daily-attendance-anytime-event", SelfTests.A21DailyAttendanceAnytimeEventSelfTest.Run),
+            ("--selftest-a21-total-attendance-event", SelfTests.A21TotalAttendanceEventSelfTest.Run),
             ("--selftest-a21-death-tower-protocol", SelfTests.A21DeathTowerProtocolSelfTest.Run),
             ("--selftest-a21-special-dungeon-protocol", SelfTests.A21SpecialDungeonProtocolSelfTest.Run),
             ("--selftest-dungeon-entry-limit", SelfTests.DungeonEntryLimitServiceSelfTest.Run),
             ("--selftest-item-state", SelfTests.ItemStateSelfTest.Run),
+            ("--selftest-exp-bonus-potion", SelfTests.ExperienceBonusPotionSelfTest.Run),
+            ("--selftest-dungeon-experience", SelfTests.DungeonExperienceSelfTest.Run),
             ("--selftest-pet-creature-runtime", SelfTests.PetCreatureRuntimeSelfTest.Run),
             ("--selftest-titlebook-use-item", SelfTests.TitleBookUseItemAchievementSelfTest.Run),
             ("--selftest-quest-completion-ticket", SelfTests.QuestCompletionTicketSelfTest.Run),
@@ -166,6 +171,11 @@ namespace DfoServer
             }
             GameNetworkConfig.Configure(args);
             GameNetworkConfig.ValidateRelayConfiguration();
+            Infrastructure.GatewayAdmission.ConfigureFromEnvironment();
+            if (Infrastructure.GatewayAdmission.Enabled)
+                Console.WriteLine("[Gateway] LOGIN ticket admission enabled");
+            else if (Infrastructure.GatewayAdmission.DirectLoginDevEnabled)
+                Console.WriteLine("[Gateway] DIRECT LOGIN DEV mode enabled");
 
             // 频道目录驱动监听集合: 每频道一个独立 TCP 端口(10000+频道号),
             // 客户端连哪个端口, CHANNELINFO 就带哪个频道身份。
@@ -278,6 +288,7 @@ namespace DfoServer
             }
 
             server.Start(portConfigs);
+            Infrastructure.GatewayAdmin.Start(server);
 
             Game.Inventory.InventoryPersistenceService.RegisterClock(Infrastructure.ClockService.Instance);
             Infrastructure.ClockService.Instance.Start();
@@ -341,6 +352,7 @@ namespace DfoServer
                 }
             }
 
+            Infrastructure.GatewayAdmin.Stop();
             server.Stop();
             Game.Inventory.InventoryPersistenceService.SaveAllDirty();
             // 服务停止后不再产生常规业务日志，此时完成队列并等待后台写入结束，避免退出时丢失尾部日志。

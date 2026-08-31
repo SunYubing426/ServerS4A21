@@ -12,8 +12,6 @@ namespace DfoServer.Network.Handlers
 {
     public sealed class LoginHandler
     {
-        private const string DefaultLoginMid = "10038";
-
         private readonly IAccountRepository _accountRepository;
         private readonly ICharacterRepository _characterRepository;
         private readonly AccountSettingsRepository _settingsRepository;
@@ -65,27 +63,40 @@ namespace DfoServer.Network.Handlers
 
             try
             {
-                var mId = DefaultLoginMid;
-                var passwordHash = string.Empty;
-                if (LoginRequestParser.TryParse(body, out var parsed))
+                if (session.Account != null)
                 {
-                    mId = parsed.MId;
-                    passwordHash = parsed.PasswordHash ?? string.Empty;
-                    FileLogger.Log($"[{ProtocolName}] Login request parsed: m_id={mId} pwd_md5={passwordHash}");
+                    FileLogger.Log(
+                        $"[{ProtocolName}] LOGIN rejected: already bound account_id={session.Account.AccountId}");
+                    session.Close();
+                    return;
+                }
+
+                if (GatewayAdmission.Enabled)
+                {
+                    var admitted = await TryAdmitGatewayLoginAsync(session, body);
+                    if (!admitted.ok)
+                        return;
+                    BindAccount(session, admitted.mid, string.Empty);
+                }
+                else if (GatewayAdmission.DirectLoginDevEnabled)
+                {
+                    var admitted = TryAdmitDirectLoginDev(session, body);
+                    if (!admitted.ok)
+                        return;
+                    BindAccount(session, admitted.mid, admitted.passwordHash);
                 }
                 else
                 {
-                    FileLogger.Log($"[{ProtocolName}] Login body unparseable, falling back to m_id={DefaultLoginMid}");
+                    FileLogger.Log(
+                        $"[{ProtocolName}] LOGIN rejected: gateway admission disabled");
+                    session.Close();
+                    return;
                 }
 
-                var account = _accountRepository.GetByMid(mId);
+                var account = session.Account;
                 if (account == null)
-                {
-                    var newId = _accountRepository.Create(mId, passwordHash);
-                    account = _accountRepository.GetById(newId);
-                    FileLogger.Log($"[{ProtocolName}] Login auto-created account id={newId} m_id={mId}");
-                }
-                session.Account = account;
+                    return;
+
                 var remoteIp = session.TcpClient?.Client?.RemoteEndPoint?.ToString() ?? string.Empty;
                 _accountRepository.UpdateLastLogin(account.AccountId, remoteIp, DateTime.UtcNow);
                 FileLogger.Log($"[{ProtocolName}] Login bound session {session.SessionId} -> account_id={account.AccountId} m_id={account.MId}");
@@ -93,6 +104,7 @@ namespace DfoServer.Network.Handlers
             catch (Exception ex)
             {
                 FileLogger.Log($"[{ProtocolName}] Login account lookup failed: {ex.Message}");
+                session.Close();
                 return;
             }
 
@@ -147,6 +159,73 @@ namespace DfoServer.Network.Handlers
             bool freeDuelChannelEnabled)
             => !GameNetworkConfig.IsFreeDuelListener(listenerPort)
                || freeDuelChannelEnabled;
+
+        private async Task<(bool ok, string mid)> TryAdmitGatewayLoginAsync(
+            EnhancedClientSession session,
+            byte[] body)
+        {
+            if (!LoginRequestParser.TryParse(body, out var parsed)
+                || string.IsNullOrEmpty(parsed.MId)
+                || string.IsNullOrEmpty(parsed.PasswordHash))
+            {
+                FileLogger.Log($"[{ProtocolName}] GATEWAY LOGIN rejected: unparseable");
+                session.Close();
+                return (false, "");
+            }
+
+            var claimed = parsed.MId.Trim();
+            var consumed = await GatewayAdmission.TryConsumeTicketAsync(claimed, parsed.PasswordHash);
+            if (!consumed.ok)
+            {
+                FileLogger.Log($"[{ProtocolName}] GATEWAY LOGIN rejected mid={claimed}");
+                session.Close();
+                return (false, "");
+            }
+
+            FileLogger.Log($"[{ProtocolName}] GATEWAY LOGIN ticket ok mid={consumed.mid}");
+            return (true, consumed.mid);
+        }
+
+        private (bool ok, string mid, string passwordHash) TryAdmitDirectLoginDev(
+            EnhancedClientSession session,
+            byte[] body)
+        {
+            if (!LoginRequestParser.TryParse(body, out var parsed)
+                || string.IsNullOrEmpty(parsed.MId))
+            {
+                FileLogger.Log($"[{ProtocolName}] DIRECT LOGIN dev rejected: unparseable");
+                session.Close();
+                return (false, "", "");
+            }
+
+            var claimed = parsed.MId.Trim();
+            if (claimed.Length == 0)
+            {
+                FileLogger.Log($"[{ProtocolName}] DIRECT LOGIN dev rejected: empty mid");
+                session.Close();
+                return (false, "", "");
+            }
+
+            FileLogger.Log($"[{ProtocolName}] DIRECT LOGIN dev accepted mid={claimed}");
+            return (true, claimed, parsed.PasswordHash ?? string.Empty);
+        }
+
+        private void BindAccount(
+            EnhancedClientSession session,
+            string mId,
+            string passwordHash)
+        {
+            mId = (mId ?? "").Trim();
+            var account = _accountRepository.GetByMid(mId);
+            if (account == null)
+            {
+                var newId = _accountRepository.Create(mId, passwordHash ?? string.Empty);
+                account = _accountRepository.GetById(newId);
+                FileLogger.Log($"[{ProtocolName}] Login created account id={newId} m_id={mId}");
+            }
+
+            session.Account = account;
+        }
 
         private bool EnsureListenerAdmission(
             EnhancedClientSession session,
