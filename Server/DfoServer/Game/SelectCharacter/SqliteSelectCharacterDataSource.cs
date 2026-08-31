@@ -7,7 +7,7 @@ using DfoServer.Game.ExpertJob;
 using DfoServer.Game.Inventory;
 using DfoServer.Game.ItemUpgrade;
 using DfoServer.Game.KnightShield;
-using DfoServer.Game.Lottery;
+using DfoServer.Game.Premium;
 using DfoServer.Game.Settings;
 using DfoServer.Game.TitleBook;
 using System;
@@ -30,7 +30,7 @@ namespace DfoServer.Game.SelectCharacter
         private readonly AccountSettingsRepository _accountSettingsRepository;
         private readonly CharacterTitleBookRepository _titleBookRepository;
         private readonly DailyReset.DailyResetService _dailyResetService;
-        private readonly LotteryDoubleRewardPolicy _lotteryDoubleRewardPolicy;
+        private readonly DevilContractUsagePolicy _devilContractUsagePolicy;
         private readonly TitleBookMutationService _titleBookMutationService;
         private readonly HonorLevelSyncService _honorLevel;
         private readonly CharacterGoldLimitRepository _goldLimitRepository;
@@ -70,9 +70,9 @@ namespace DfoServer.Game.SelectCharacter
             _connectionString = database.ConnectionString;
             var resolvedRentalTimeProvider = rentalTimeProvider ?? SystemRentalTimeProvider.Instance;
             _dailyResetService = dailyResetService ?? new DailyReset.DailyResetService(database);
-            _lotteryDoubleRewardPolicy = new LotteryDoubleRewardPolicy(
-                _dailyResetService,
-                _connectionString);
+            _devilContractUsagePolicy = new DevilContractUsagePolicy(
+                database,
+                _dailyResetService);
             _inventoryLifecycle = inventoryLifecycle ?? new InventoryCharacterLifecycleService(
                 database,
                 resolvedRentalTimeProvider);
@@ -329,34 +329,24 @@ namespace DfoServer.Game.SelectCharacter
                 var goldLimits = _goldLimitRepository.LoadOrCreate(characterId, character.Level);
                 initSnapshot.GoldLimitUpgradeLevel = goldLimits.UpgradeLevel;
             }
-            initSnapshot.MainGameOptionBlob = (byte[])(acctSettings?.MainGameOption
-                ?? Settings.AccountSettings.DefaultMainGameOption).Clone();
+            // 无保存记录的账号/角色不下发设置数据，由客户端使用本地默认；
+            // 客户端上行保存(00C5/00C6/0170)后即有真实数据可下发。
+            initSnapshot.MainGameOptionBlob = acctSettings?.MainGameOption == null
+                ? null
+                : (byte[])acctSettings.MainGameOption.Clone();
             initSnapshot.QuickchatBank0 = acctSettings?.QuickchatBank0;
             initSnapshot.QuickchatBank1 = acctSettings?.QuickchatBank1;
-            var hkSlots = initSnapshot.HotkeyConfigSlots.Count > 0
-                ? BuildHotkeyBlob(initSnapshot.HotkeyConfigSlots)
-                : Settings.CharacterKeyboardDefaults.BuildHotkeySlots((byte)(character?.Job ?? 0));
-            if (character != null
-                && Settings.CharacterKeyboardDefaults.IsCreatorMage(character.Job)
-                && Settings.CharacterKeyboardDefaults.LooksLikeNormalDefaultHotkeySlots(hkSlots))
-            {
-                hkSlots = Settings.CharacterKeyboardDefaults.BuildHotkeySlots(character.Job);
-                _initFlagsRepository.SaveHotkeyConfig(characterId, hkSlots);
-            }
-            if (hkSlots != null && hkSlots.Length >= 2)
-            {
-                initSnapshot.HotkeyKeyType = character != null && Settings.CharacterKeyboardDefaults.IsCreatorMage(character.Job)
-                    ? (byte)1
-                    : (acctSettings?.HotkeyKeyType ?? 0);
-                initSnapshot.HotkeyConfigSlots.Clear();
-                for (int i = 0; i + 1 < hkSlots.Length; i += 2)
-                    initSnapshot.HotkeyConfigSlots.Add(BitConverter.ToUInt16(hkSlots, i));
-            }
+            initSnapshot.HotkeyKeyType = acctSettings?.HotkeyKeyType ?? 0;
 
 
             initSnapshot.ShopCoinEventFlag = _dailyResetService.IsClaimed(characterId, ReviveCoin.ReviveCoinService.DailyClaimKey) ? (byte)1 : (byte)0;
 
             LoadAccountPremiums(accountId, initSnapshot);
+            initSnapshot.PremiumServiceType = Premium.PremiumService.DefaultServiceType;
+            initSnapshot.PremiumServiceData = Premium.PremiumService.BuildPremiumServiceData(
+                _connectionString,
+                accountId,
+                _devilContractUsagePolicy.BuildPremiumServiceUsage(characterId));
 
             
             
@@ -619,15 +609,6 @@ namespace DfoServer.Game.SelectCharacter
             initSnapshot.LuckyStar = wallet.LuckyStar;
         }
 
-        private static byte[] BuildHotkeyBlob(IReadOnlyList<ushort> slots)
-        {
-            var count = slots?.Count ?? 0;
-            var result = new byte[count * 2];
-            for (var i = 0; i < count; i++)
-                Buffer.BlockCopy(BitConverter.GetBytes(slots[i]), 0, result, i * 2, 2);
-            return result;
-        }
-
         private static void SanitizeDarkKnightComboSkillInfo(SelectCharacterInitializationSnapshot initSnapshot)
         {
             if (initSnapshot?.SkillInfo?.Pages == null || initSnapshot.DarkKnightComboSkillInfoBodies.Count == 0)
@@ -786,8 +767,6 @@ ON CONFLICT(character_id) DO UPDATE SET manage_level=excluded.manage_level;";
             {
                 _inventoryLifecycle.SeedNewCharacterEquipment(characterId, accountId, initialEquip);
             }
-
-            _initFlagsRepository.SaveHotkeyConfig(characterId, Settings.CharacterKeyboardDefaults.BuildHotkeySlots(job));
 
             SeedNewCharacterStructuredData(characterId, job);
         }

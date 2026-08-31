@@ -891,7 +891,8 @@ namespace DfoServer.Network.Handlers.Dungeon
                         roomState,
                         monster,
                         dungeonMinimumLevel,
-                        dungeonBasisLevel));
+                        dungeonBasisLevel,
+                        session.Player.CharacterId));
                 goldGained = 0;
             }
             else
@@ -1487,7 +1488,8 @@ namespace DfoServer.Network.Handlers.Dungeon
             RoomState roomState,
             DungeonData.MonsterSumInfo monster,
             int dungeonMinimumLevel,
-            int dungeonBasisLevel)
+            int dungeonBasisLevel,
+            int characterId)
         {
             var isLastGroupMonster = false;
             if (roomState.HellPartyGroupRemaining != null
@@ -1517,6 +1519,7 @@ namespace DfoServer.Network.Handlers.Dungeon
                 RewardRollCount = monster.HellRewardRollCount,
                 IsLastGroupMonster = isLastGroupMonster,
                 IsAbyssMonsterScript = monster.IsHellMonsterScript,
+                CharacterId = characterId,
             };
         }
 

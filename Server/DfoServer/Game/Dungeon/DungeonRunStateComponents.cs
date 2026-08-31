@@ -223,6 +223,7 @@ namespace DfoServer.Game.Dungeon
         internal SecretShop.SecretShopOffer SecretShopOffer { get; set; }
         internal List<ClearRewardGenerator.CardReward> CardRewards { get; set; }
         internal int PaidCardCost { get; set; }
+        internal bool PaidCardUsesDevilContract { get; set; }
         internal int CardFlipCount { get; set; }
         internal byte[] FreeCardSlots { get; set; } = { 0xFF, 0xFF, 0xFF, 0xFF };
         internal byte[] PaidCardSlots { get; set; } = { 0xFF, 0xFF, 0xFF, 0xFF };
@@ -247,6 +248,7 @@ namespace DfoServer.Game.Dungeon
         internal QuestRunSnapshot Snapshot { get; set; } = QuestRunSnapshot.Empty;
         internal DungeonCaptureDropJournal CaptureDrops { get; }
             = new DungeonCaptureDropJournal();
+        internal bool? QuestAssistantActive { get; set; }
 
         internal bool TryMarkClearMapSynced(int dungeonId, int mapId)
             => _syncedClearMapTargets.Add((dungeonId, mapId));

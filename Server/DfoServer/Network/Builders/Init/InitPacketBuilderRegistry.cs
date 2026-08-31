@@ -47,6 +47,7 @@ namespace DfoServer.Network.Builders
             Register(new EmptyPartyInfoBodyBuilder());
             Register(new ItemStateListBodyBuilder(0x00AC));
             Register(new ItemStateListBodyBuilder(0x00AE));
+            Register(new EpicBuffPotionInitBodyBuilder());
             Register(new AchievementListBodyBuilder());    
             Register(new TitleBookListBodyBuilder());   
             Register(new StoryBookInfoBodyBuilder());
@@ -61,6 +62,7 @@ namespace DfoServer.Network.Builders
             Register(new SimpleByteBodyBuilder(
                 (ushort)NotiPacketTypeA21.UPGRADE_CARRY_GOLD,
                 s => s.GoldLimitUpgradeLevel));
+            Register(new PremiumServiceInitBodyBuilder());
 
             
             Register(new EnterGameWorldCompleteBodyBuilder());
@@ -104,6 +106,12 @@ namespace DfoServer.Network.Builders
             RegisterCmd(new MercenaryInfoCmdBodyBuilder(_database));
             RegisterCmd(new WeddingCharacCmdBodyBuilder());
         }
+
+        public bool HasBuilder(ushort notiType)
+            => notiType == (ushort)NotiPacketTypeA21.COUPLE_ROOM || _builders.ContainsKey(notiType);
+
+        public bool HasCmdBuilder(ushort cmdType)
+            => _cmdBuilders.ContainsKey(cmdType) || cmdType == 0x0004;
 
         public bool TryBuild(ushort notiType, SelectCharacterDataSnapshot snapshot, int occurrenceIndex, out byte[] body)
         {
