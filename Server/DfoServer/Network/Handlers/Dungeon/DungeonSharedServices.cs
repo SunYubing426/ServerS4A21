@@ -53,6 +53,7 @@ namespace DfoServer.Network.Handlers.Dungeon
         internal Game.Session.ISessionDirectory Sessions { get; }
         internal CardRewardCoordinator CardRewards { get; }
         internal Game.Dungeon.DropService Drops { get; }
+        internal Game.Premium.DevilContractUsagePolicy DevilContracts { get; }
         internal Game.Dungeon.DungeonEntryAdmissionApplicationService
             EntryAdmission { get; }
         internal Game.Dungeon.DungeonEntryLimitService EntryLimits { get; }
@@ -121,6 +122,8 @@ namespace DfoServer.Network.Handlers.Dungeon
                 ?? new RecommendDungeonClearStatsService(Database);
             DailyAttendanceAnytime = dailyAttendanceAnytime;
             TotalAttendance = totalAttendance;
+            DevilContracts = new Game.Premium.DevilContractUsagePolicy(
+                Database);
             Subtype1Repository = new SqliteSubtype1Repository(
                 Database);
             CharacterStateRepository = new SqliteCharacterStateRepository(
@@ -202,7 +205,8 @@ namespace DfoServer.Network.Handlers.Dungeon
                     new Game.Dungeon.TowerOfDespairProgressRepository(
                         Database));
             CardRewards = new CardRewardCoordinator(
-                new Game.Dungeon.CardRewardService(PersistentEffects));
+                new Game.Dungeon.CardRewardService(PersistentEffects),
+                database: Database);
             AdmissionRejects = new DungeonAdmissionRejectSender();
         }
     }

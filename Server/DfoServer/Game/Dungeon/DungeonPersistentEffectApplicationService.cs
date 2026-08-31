@@ -4,6 +4,7 @@ using System.Text.Json;
 using DfoServer.Game.Currency;
 using DfoServer.Game.Dungeon.BloodAltar;
 using DfoServer.Game.Inventory;
+using DfoServer.Game.Premium;
 using DfoServer.Game.Progression;
 using DfoServer.Infrastructure;
 using Microsoft.Data.Sqlite;
@@ -170,6 +171,7 @@ namespace DfoServer.Game.Dungeon
     {
         internal IReadOnlyList<InventorySlotMutation> Changes { get; set; }
             = Array.Empty<InventorySlotMutation>();
+        internal bool ConsumedGoldCardContractUse { get; set; }
     }
 
     internal sealed class CardRewardEffectPayload
@@ -178,6 +180,7 @@ namespace DfoServer.Game.Dungeon
         public int AccountId { get; set; }
         public int Side { get; set; }
         public int PaidGoldCost { get; set; }
+        public bool ConsumeGoldCardContractUse { get; set; }
         public int RequestedGold { get; set; }
         public int ItemId { get; set; }
         public int StackCount { get; set; }
@@ -193,6 +196,7 @@ namespace DfoServer.Game.Dungeon
     {
         public List<CardRewardEffectMutation> Changes { get; set; }
             = new List<CardRewardEffectMutation>();
+        public bool ConsumedGoldCardContractUse { get; set; }
     }
 
     internal sealed class BloodAltarRewardEffectItem
@@ -247,6 +251,7 @@ namespace DfoServer.Game.Dungeon
         private readonly DungeonPersistentEffectOutbox _outbox;
         private readonly DungeonPersistentEffectRecoveryOptions
             _recoveryOptions;
+        private readonly DevilContractUsagePolicy _devilContractUsage;
         private readonly Func<long> _monotonicMilliseconds;
         private readonly object _dependencySync = new object();
         private IInventoryOverflowRewardSink _overflowRewardSink;
@@ -268,6 +273,7 @@ namespace DfoServer.Game.Dungeon
                 ?? new DungeonPersistentEffectOutbox(connectionString);
             _database = database
                 ?? GameDatabase.AttachInitialized(connectionString);
+            _devilContractUsage = new DevilContractUsagePolicy(_database);
             _recoveryOptions = recoveryOptions
                 ?? new DungeonPersistentEffectRecoveryOptions();
             _monotonicMilliseconds = monotonicMilliseconds
@@ -538,6 +544,7 @@ namespace DfoServer.Game.Dungeon
             Guid ownerSessionId,
             CardRewardSide side,
             int paidGoldCost,
+            bool consumeGoldCardContractUse,
             IReadOnlyList<ClearRewardGenerator.CardReward> cards,
             out CardRewardPersistentCommitResult result,
             out string error)
@@ -564,6 +571,7 @@ namespace DfoServer.Game.Dungeon
                     accountId,
                     side,
                     paidGoldCost,
+                    consumeGoldCardContractUse,
                     cards);
                 _outbox.Enqueue(CreateDefinition(
                     effectId,
@@ -1358,7 +1366,21 @@ namespace DfoServer.Game.Dungeon
                                 "transaction commit.");
                         }
 
-                        var persistedResult = BuildCardRewardEffectResult(changes);
+                        if (payload.ConsumeGoldCardContractUse
+                            && !_devilContractUsage.TryConsume(
+                                connection,
+                                transaction,
+                                payload.CharacterId,
+                                payload.AccountId,
+                                DevilContractUsagePolicy.GoldCardSlot))
+                        {
+                            throw new InvalidOperationException(
+                                "Gold-card Devil Contract use is unavailable.");
+                        }
+
+                        var persistedResult = BuildCardRewardEffectResult(
+                            changes,
+                            payload.ConsumeGoldCardContractUse);
                         if (!_outbox.TryCommitInTransaction(
                                 connection,
                                 transaction,
@@ -2096,6 +2118,7 @@ namespace DfoServer.Game.Dungeon
             int accountId,
             CardRewardSide side,
             int paidGoldCost,
+            bool consumeGoldCardContractUse,
             IReadOnlyList<ClearRewardGenerator.CardReward> cards)
         {
             if (cards == null)
@@ -2111,6 +2134,8 @@ namespace DfoServer.Game.Dungeon
                 PaidGoldCost = side == CardRewardSide.Paid
                     ? paidGoldCost
                     : 0,
+                ConsumeGoldCardContractUse = side == CardRewardSide.Paid
+                    && consumeGoldCardContractUse,
             };
             if (side == CardRewardSide.Free)
             {
@@ -2188,6 +2213,8 @@ namespace DfoServer.Game.Dungeon
                             DungeonPersistentEffectKinds.CardRewardPaidCommit,
                             StringComparison.Ordinal)
                         || payload.RequestedGold != 0
+                        || (payload.ConsumeGoldCardContractUse
+                            && payload.PaidGoldCost != 0)
                         || !itemValid)))
             {
                 throw new PermanentPersistentEffectException(
@@ -2269,9 +2296,13 @@ namespace DfoServer.Game.Dungeon
         }
 
         private static CardRewardEffectResult BuildCardRewardEffectResult(
-            IReadOnlyList<InventorySlotMutation> changes)
+            IReadOnlyList<InventorySlotMutation> changes,
+            bool consumedGoldCardContractUse)
         {
-            var result = new CardRewardEffectResult();
+            var result = new CardRewardEffectResult
+            {
+                ConsumedGoldCardContractUse = consumedGoldCardContractUse,
+            };
             if (changes == null)
                 return result;
             foreach (var change in changes)
@@ -2310,6 +2341,8 @@ namespace DfoServer.Game.Dungeon
             return new CardRewardPersistentCommitResult
             {
                 Changes = changes,
+                ConsumedGoldCardContractUse =
+                    persisted.ConsumedGoldCardContractUse,
             };
         }
 
