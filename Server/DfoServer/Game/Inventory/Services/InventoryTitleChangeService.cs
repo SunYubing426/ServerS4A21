@@ -153,9 +153,7 @@ namespace DfoServer.Game.Inventory
             var updatedTarget = target.Copy();
             updatedTarget.ItemId = resolution.ResultItemId;
             InventoryRewardGrantResult resultGrant = null;
-            if (resolution.IsLimitedCube
-                && InventoryStackRuleService.IsStackable(target)
-                && target.Count > 1)
+            if (ShouldSplitStackedTarget(resolution, target))
             {
                 // A stacked orb change consumes one orb, not the whole stack.
                 var remainingTarget = target.Copy();
@@ -200,6 +198,16 @@ namespace DfoServer.Game.Inventory
             result.SourceRemainingCount = inventory
                 .GetItem(InventoryListType.Main, request.SourceSlotIndex)?.Count ?? 0;
             return true;
+        }
+
+        internal static bool ShouldSplitStackedTarget(
+            InventoryTitleChangeResolution resolution,
+            ItemCore target)
+        {
+            return resolution != null
+                && resolution.IsLimitedCube
+                && InventoryStackRuleService.IsStackable(target)
+                && target.Count > 1;
         }
 
         private static InventoryTitleChangeResult CreateResult(
