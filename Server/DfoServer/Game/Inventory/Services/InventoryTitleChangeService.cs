@@ -152,7 +152,34 @@ namespace DfoServer.Game.Inventory
 
             var updatedTarget = target.Copy();
             updatedTarget.ItemId = resolution.ResultItemId;
-            if (updatedTarget.ItemId != target.ItemId
+            InventoryRewardGrantResult resultGrant = null;
+            if (resolution.IsLimitedCube
+                && InventoryStackRuleService.IsStackable(target)
+                && target.Count > 1)
+            {
+                // A stacked orb change consumes one orb, not the whole stack.
+                var remainingTarget = target.Copy();
+                remainingTarget.Count--;
+                if (!inventory.SetItem(
+                        InventoryListType.Main,
+                        request.TargetSlotIndex,
+                        remainingTarget)
+                    || !InventoryRewardGrantService.TryInsertExisting(
+                        inventory,
+                        updatedTarget,
+                        1,
+                        ItemCreateReason.Unknown,
+                        null,
+                        out resultGrant)
+                    || resultGrant == null
+                    || !resultGrant.Success
+                    || resultGrant.GrantedCount != 1)
+                {
+                    rollback.Restore(inventory);
+                    return Fail(result, InventoryTitleChangeError.UpdateFailed);
+                }
+            }
+            else if (updatedTarget.ItemId != target.ItemId
                 && !inventory.SetItem(
                     InventoryListType.Main,
                     request.TargetSlotIndex,
