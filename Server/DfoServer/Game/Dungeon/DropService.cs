@@ -185,6 +185,9 @@ namespace DfoServer.Game.Dungeon
                     run.Difficulty,
                     request.AbyssPartyDifficulty,
                     request.RewardRollCount,
+                    EpicBuffPotionDefinition.IsActiveForCharacter(
+                        request.CharacterId,
+                        InventoryItemLifecycleService.UtcNowUnixSeconds()),
                     ref slotCounter);
                 drops.AddRange(rewardDrops);
 
@@ -640,6 +643,7 @@ namespace DfoServer.Game.Dungeon
         public int RewardRollCount;
         public bool IsLastGroupMonster;
         public bool IsAbyssMonsterScript;
+        public int CharacterId;
     }
 
     internal struct MonsterDropResult
