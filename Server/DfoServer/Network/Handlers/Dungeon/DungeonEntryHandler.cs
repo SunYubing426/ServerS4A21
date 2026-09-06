@@ -8,6 +8,7 @@ using DfoServer.Game.Quests;
 using DfoServer.Game.SelectCharacter;
 using DfoServer.GameWorld;
 using DfoServer.Infrastructure;
+using DfoServer.Network;
 using DfoServer.Network.Builders;
 using DfoServer.Network.Builders.Party;
 using DfoServer.Network.Parsers.Dungeon;
@@ -2590,7 +2591,27 @@ namespace DfoServer.Network.Handlers.Dungeon
                 $"cid={session?.Player?.CharacterId ?? 0} " +
                 $"dungeon={dungeonId} cost={cost} members={targets.Count} " +
                 $"used={result.Used} max={result.Max}");
+            await NotifyFatigueAsync(targets);
             return true;
+        }
+
+        private async Task NotifyFatigueAsync(
+            IReadOnlyList<CharacterFatigueTarget> targets)
+        {
+            if (targets == null || targets.Count == 0 || _svc.Sessions == null)
+                return;
+
+            foreach (var target in targets)
+            {
+                var snapshot = _svc.Fatigue.Load(target.CharacterId);
+                await _svc.Sessions.SendToAsync(
+                    target.CharacterId,
+                    GamePacketEnvelopeBuilder.Build(
+                        0x00,
+                        (ushort)NotiPacketTypeA21.FATIGUE,
+                        CharacterFatiguePacketBuilder.BuildNotification(
+                            snapshot)));
+            }
         }
 
         private async Task<bool> TryValidateEntryLimitAsync(
