@@ -134,18 +134,12 @@ namespace DfoServer.Network.Builders
 
             writer.WriteByte(initSnap.AckCharSlotIndex);
 
-            if (record.Level <= 1 && initSnap.AckTutorialSkipable == 0)
-            {
-                writer.WriteByte(0x00);  // v15 flag
-                writer.WriteByte(0x00);  // v16 count = 0
-            }
-            else
-            {
-                writer.WriteByte(0x00);  // v15 flag
-                writer.WriteByte(0x01);  // v16 count = 1
-                writer.WriteByte(0x4E);  // flagIndex = 78
-            }
-
+            // pad0 + flag_count + flags[count], then HUD 疲劳蓄电池 two u16s.
+            // Always count=0: the old level>1 `01 4E` was a capture leftover
+            // (HUD second number 78=0x4E). Official unused battery is 0/0;
+            // seed 3073/513 were misaligned slices of this list, not an owner.
+            writer.WriteByte(0x00);
+            writer.WriteByte(0x00);
             writer.WriteUInt16(initSnap.AckFatigueBattery);
             writer.WriteUInt16(initSnap.AckFatigueGrownUpBuff);
             writer.WriteByte(initSnap.AckTradePunishFlag);

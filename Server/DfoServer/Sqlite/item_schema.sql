@@ -405,8 +405,8 @@ CREATE TABLE IF NOT EXISTS character_init_flags (
     racing_dungeon_current_enter_count INTEGER NOT NULL DEFAULT 0,  -- seed=5
     -- CMD 0x0004 SELECT_CHARACTER ACK (non-zero seeds retained)
     ack_char_slot_index INTEGER NOT NULL DEFAULT 0,                 -- overwritten by TownId at runtime; seed=2
-    ack_fatigue_battery INTEGER NOT NULL DEFAULT 0,                 -- seed=3073
-    ack_fatigue_grownup_buff INTEGER NOT NULL DEFAULT 0,            -- seed=513
+    ack_fatigue_battery INTEGER NOT NULL DEFAULT 0,                 -- SELECT_CHARACTER ACK u16 after tutorial flag list; unused=0. seed=3073 was capture residue
+    ack_fatigue_grownup_buff INTEGER NOT NULL DEFAULT 0,            -- paired HUD u16; unused=0. seed=513 was capture residue
     ack_trade_punish_flag INTEGER NOT NULL DEFAULT 0,               -- seed=30
     ack_extra_field_86jp INTEGER NOT NULL DEFAULT 0,                -- seed=9247
     ack_tutorial_skipable INTEGER NOT NULL DEFAULT 0,               -- DungeonTutorialHandler writes

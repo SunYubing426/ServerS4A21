@@ -4,6 +4,7 @@ using System.IO;
 using DfoServer.Game.Characters;
 using DfoServer.Game.DailyReset;
 using DfoServer.Game.Dungeon;
+using DfoServer.Game.Quests;
 using DfoServer.Game.SelectCharacter;
 using DfoServer.Infrastructure;
 using DfoServer.Network.Builders;
@@ -25,6 +26,7 @@ namespace DfoServer.SelfTests
             VerifyPartyConsumeIsAtomic(ref failures);
             VerifyDailyResetDoesNotRestoreSameDay(ref failures);
             VerifySelectCharacterAckWritesPersistedUsed(ref failures);
+            VerifySelectCharacterAckBatteryFollowsEmptyTutorialFlags(ref failures);
             VerifyEntryCostRules(ref failures);
             VerifyRoomVisitRules(ref failures);
             VerifyV26ToCurrentMigration(ref failures);
@@ -305,6 +307,52 @@ namespace DfoServer.SelfTests
             {
                 TryDelete(databasePath);
             }
+        }
+
+        private static void VerifySelectCharacterAckBatteryFollowsEmptyTutorialFlags(
+            ref int failures)
+        {
+            var snapshot = new SelectCharacterDataSnapshot
+            {
+                CharacterRecord = new CharacterRecord
+                {
+                    CharacterId = 4002,
+                    CreatedAt = DateTime.UtcNow,
+                    Level = 7,
+                },
+                InitializationSnapshot = new SelectCharacterInitializationSnapshot
+                {
+                    AckTutorialSkipable = 1,
+                    AckFatigueBattery = 0,
+                    AckFatigueGrownUpBuff = 0,
+                },
+            };
+            Check(
+                "level>1 ACK builds",
+                SelectCharacterAckBodyBuilder.TryBuild(snapshot, out var body)
+                && body != null,
+                ref failures);
+            if (body == null)
+                return;
+
+            var tutorialOffset = 1 + 4 + 4 + 2 + 6 + 1
+                + 4
+                + QuestSlotLayout.ActiveSlotCount * 6
+                + QuestNotifySelectionService.MaxSlots * 4
+                + 1;
+            Check(
+                "veteran ACK tutorial list is pad+count=0 without flag 0x4E",
+                tutorialOffset + 5 < body.Length
+                && body[tutorialOffset] == 0
+                && body[tutorialOffset + 1] == 0
+                && body[tutorialOffset + 2] != 0x4E,
+                ref failures);
+            Check(
+                "fatigue battery HUD u16s are 0/0 immediately after empty flag list",
+                tutorialOffset + 5 < body.Length
+                && BitConverter.ToUInt16(body, tutorialOffset + 2) == 0
+                && BitConverter.ToUInt16(body, tutorialOffset + 4) == 0,
+                ref failures);
         }
 
         private static void VerifyEntryCostRules(ref int failures)
