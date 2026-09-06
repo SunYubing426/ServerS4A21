@@ -1,7 +1,9 @@
 using DfoServer.Game.Characters;
+using DfoServer.Game.Dungeon;
 using DfoServer.Game.Quests;
 using DfoServer.Game.SelectCharacter;
 using DfoServer.GameWorld;
+using DfoServer.Infrastructure;
 using System;
 using System.Collections.Generic;
 
@@ -50,13 +52,33 @@ namespace DfoServer.Network.Builders
             // [9] u16 uniqueId
             writer.WriteInt16(record != null ? (short)record.CharacterId : (short)initSnap.AckUniqueId);
 
-            // [11] i16 totalFatigue
-            writer.WriteInt16(0);
+            var fatigue = new CharacterFatigueSnapshot(
+                0,
+                CharacterFatigueService.DefaultMaxFatigue);
+            if (record != null
+                && record.CharacterId > 0
+                && !string.IsNullOrWhiteSpace(connectionString))
+            {
+                try
+                {
+                    fatigue = new CharacterFatigueService(connectionString)
+                        .Load(record.CharacterId);
+                }
+                catch (Exception ex)
+                {
+                    FileLogger.Log(
+                        $"[SelectCharacterAck] fatigue load failed " +
+                        $"cid={record.CharacterId}: {ex.Message}");
+                }
+            }
 
-            writer.WriteInt16(188);
-
-            // [15] i16 usedFatigue
-            writer.WriteInt16(0);
+            FileLogger.Log(
+                $"[SelectCharacterAck] fatigue cid={record.CharacterId} " +
+                $"remaining={fatigue.Remaining} used={fatigue.Used} " +
+                $"max={fatigue.Max}");
+            // [11] i16 Fatigue used (HUD remaining = max - this),
+            // [13] FatigueMax, [15] usedFatigueMax (same used)
+            CharacterFatiguePacketBuilder.WriteSnapshot(writer, fatigue);
 
             // [17] u8 premiumCount + N × (u8 type + u8[8] endTime)
             var premiums = initSnap.AckPremiums;

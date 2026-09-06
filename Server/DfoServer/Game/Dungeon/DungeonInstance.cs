@@ -654,6 +654,8 @@ namespace DfoServer.Game.Dungeon
         private readonly object _syncRoot = new object();
         private readonly Dictionary<RoomKey, DungeonInstanceRoom> _rooms =
             new Dictionary<RoomKey, DungeonInstanceRoom>();
+        private readonly HashSet<DungeonFatigueRoomCell> _fatigueVisitedCells =
+            new HashSet<DungeonFatigueRoomCell>();
         private readonly HashSet<(
             long RoomInstanceId,
             RoomKey RoomKey,
@@ -744,6 +746,18 @@ namespace DfoServer.Game.Dungeon
         public DungeonClearedFact ClearedFact { get { lock (_syncRoot) return _clearedFact; } }
         public DungeonInstanceState State { get { lock (_syncRoot) return _state; } }
         public int VisitedRoomCount { get { lock (_syncRoot) return _rooms.Count; } }
+
+        internal bool TryMarkFatigueRoomVisited(DungeonFatigueRoomCell cell)
+        {
+            lock (_syncRoot)
+                return _fatigueVisitedCells.Add(cell);
+        }
+
+        internal bool TryUnmarkFatigueRoomVisited(DungeonFatigueRoomCell cell)
+        {
+            lock (_syncRoot)
+                return _fatigueVisitedCells.Remove(cell);
+        }
         public DungeonKillStatistics KillStatistics
         {
             get

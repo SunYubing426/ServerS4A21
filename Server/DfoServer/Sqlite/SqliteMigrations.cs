@@ -49,6 +49,7 @@ namespace DfoServer.Sqlite
                 new MigrationStep(24, "add_license_dungeon_period_state", ApplyLicenseDungeonPeriodState),
                 new MigrationStep(25, "add_license_dungeon_progress", ApplyLicenseDungeonProgress),
                 new MigrationStep(26, "add_license_dungeon_unlock_conditions", ApplyLicenseDungeonUnlockConditions),
+                new MigrationStep(27, "ensure_character_fatigue_columns", ApplyCharacterFatigue),
             };
 
         internal static int CurrentVersion =>

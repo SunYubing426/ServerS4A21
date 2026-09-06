@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 using DfoServer.Game.Accounts;
 using DfoServer.Game.CharacterData;
 using DfoServer.Game.Characters;
+using DfoServer.Game.Dungeon;
 using DfoServer.Game.Events.DailyAttendanceAnytime;
 using DfoServer.Game.Events.RecommendedDungeons;
 using DfoServer.Game.Events.TotalAttendance;
@@ -11,6 +14,10 @@ using DfoServer.Game.Progression;
 using DfoServer.Game.SelectCharacter;
 using DfoServer.GameWorld;
 using DfoServer.Infrastructure;
+using DfoServer.Network;
+using DfoServer.Network.Builders;
+using PvfLib;
+using DungeonData = DfoServer.GameWorld.Dungeon;
 
 namespace DfoServer.Network.Handlers.Dungeon
 {
@@ -57,6 +64,7 @@ namespace DfoServer.Network.Handlers.Dungeon
         internal Game.Dungeon.DungeonEntryAdmissionApplicationService
             EntryAdmission { get; }
         internal Game.Dungeon.DungeonEntryLimitService EntryLimits { get; }
+        internal Game.Dungeon.CharacterFatigueService Fatigue { get; }
         internal DungeonAdmissionRejectSender AdmissionRejects { get; }
         internal DungeonProgressNotificationProjector ProgressNotifications { get; }
         internal DungeonTownReturnCoordinator TownReturn { get; }
@@ -174,6 +182,7 @@ namespace DfoServer.Network.Handlers.Dungeon
                 new Game.Dungeon.DungeonEntryAdmissionApplicationService(
                     entryCost);
             EntryLimits = new Game.Dungeon.DungeonEntryLimitService(Database);
+            Fatigue = new Game.Dungeon.CharacterFatigueService(Database);
             Tournaments =
                 new Game.Dungeon.Tournament
                     .TournamentDungeonApplicationService();
@@ -210,6 +219,129 @@ namespace DfoServer.Network.Handlers.Dungeon
                 new Game.Dungeon.CardRewardService(PersistentEffects),
                 database: Database);
             AdmissionRejects = new DungeonAdmissionRejectSender();
+        }
+
+        internal List<CharacterFatigueTarget> ResolveFatigueTargets(
+            EnhancedClientSession session)
+        {
+            var targets = new List<CharacterFatigueTarget>();
+            var party = session?.Player == null
+                ? null
+                : PartyManager?.GetPartyByUser(session.Player.UserId);
+            if (party != null && party.Count > 1)
+            {
+                foreach (var member in party.Members)
+                {
+                    if (member.CharacterId > 0)
+                    {
+                        targets.Add(
+                            new CharacterFatigueTarget(
+                                member.CharacterId,
+                                member.SlotIndex));
+                    }
+                }
+            }
+
+            if (targets.Count == 0)
+            {
+                var characterId = session?.Player?.CharacterId ?? 0;
+                if (characterId > 0)
+                {
+                    var member = party?.GetMember(session.Player.UserId);
+                    targets.Add(
+                        new CharacterFatigueTarget(
+                            characterId,
+                            member?.SlotIndex ?? 0));
+                }
+            }
+
+            return targets;
+        }
+
+        internal bool TryChargeFatigueRoomVisit(
+            EnhancedClientSession session,
+            DungeonRun run,
+            int mazeIndex,
+            int cellX,
+            int cellY,
+            string source,
+            out CharacterFatigueConsumeResult result)
+        {
+            result = CharacterFatigueConsumeResult.Reject(
+                "invalid_request",
+                memberSlot: 0);
+            var dungeonId = run?.DungeonId ?? 0;
+            DungeonFile dungeon = null;
+            if (dungeonId > 0)
+            {
+                try
+                {
+                    dungeon = DungeonData.GetDungeonFile(dungeonId);
+                }
+                catch
+                {
+                    dungeon = null;
+                }
+            }
+
+            var targets = ResolveFatigueTargets(session);
+            var ok = Fatigue.TryConsumeRoomVisit(
+                run,
+                targets,
+                mazeIndex,
+                cellX,
+                cellY,
+                dungeon,
+                out result);
+            if (!ok)
+            {
+                FileLogger.Log(
+                    $"[{ProtocolLogName}] {source} fatigue rejected: " +
+                    $"cid={session?.Player?.CharacterId ?? 0} " +
+                    $"dungeon={dungeonId} maze={mazeIndex} " +
+                    $"cell=({cellX},{cellY}) cost={result?.Cost ?? 0} " +
+                    $"slot={result?.MemberSlot ?? 0} " +
+                    $"used={result?.Used ?? 0} max={result?.Max ?? 0} " +
+                    $"reason={result?.Reason ?? "unknown"}; " +
+                    "fail closed (no evidenced MOVE_MAP reject packet)");
+                return false;
+            }
+
+            if (result != null && result.Cost > 0)
+            {
+                FileLogger.Log(
+                    $"[{ProtocolLogName}] {source} fatigue consumed: " +
+                    $"cid={session?.Player?.CharacterId ?? 0} " +
+                    $"dungeon={dungeonId} maze={mazeIndex} " +
+                    $"cell=({cellX},{cellY}) cost={result.Cost} " +
+                    $"members={targets.Count} used={result.Used} max={result.Max}");
+            }
+
+            return true;
+        }
+
+        internal async Task NotifyFatigueAsync(EnhancedClientSession session)
+        {
+            await NotifyFatigueAsync(ResolveFatigueTargets(session));
+        }
+
+        internal async Task NotifyFatigueAsync(
+            IReadOnlyList<CharacterFatigueTarget> targets)
+        {
+            if (targets == null || targets.Count == 0 || Sessions == null)
+                return;
+
+            foreach (var target in targets)
+            {
+                var snapshot = Fatigue.Load(target.CharacterId);
+                await Sessions.SendToAsync(
+                    target.CharacterId,
+                    GamePacketEnvelopeBuilder.Build(
+                        0x00,
+                        (ushort)NotiPacketTypeA21.FATIGUE,
+                        CharacterFatiguePacketBuilder.BuildNotification(
+                            snapshot)));
+            }
         }
     }
 }

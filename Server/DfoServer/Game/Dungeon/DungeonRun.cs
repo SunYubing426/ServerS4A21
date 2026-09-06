@@ -56,6 +56,13 @@ namespace DfoServer.Game.Dungeon
         private DungeonClearedFact _clearedFact;
         private Guid _settlementSourceEventId;
         private Guid _endSourceEventId;
+        // Fatigue visit uniqueness is maze+x+y, not RoomStates/RoomKey.OverrideMapId
+        // or IsCleared. Hell/layered actor-cache rooms are not equivalent (90USA
+        // helper-dungeon_fatigue_room.py). Party members share DungeonInstance, so
+        // the live set lives on the instance when present; empty self-test runs
+        // keep a local set. In-memory for this run/instance only.
+        private readonly HashSet<DungeonFatigueRoomCell> _fatigueVisitedCells =
+            new HashSet<DungeonFatigueRoomCell>();
 
         public DungeonInstance Instance { get; }
         public DungeonRewardPolicy RewardPolicy =>
@@ -283,6 +290,24 @@ namespace DfoServer.Game.Dungeon
         public HashSet<ushort> RoomKilledSeqIds { get => Combat.RoomKilledSeqIds; set => Combat.RoomKilledSeqIds = value; }
         public RoomKey RoomKey { get => Combat.RoomKey; set => Combat.RoomKey = value; }
         public Dictionary<RoomKey, RoomState> RoomStates { get => Combat.RoomStates; set => Combat.RoomStates = value; }
+
+        internal bool TryMarkFatigueRoomVisited(int mazeIndex, int cellX, int cellY)
+        {
+            var cell = new DungeonFatigueRoomCell(mazeIndex, cellX, cellY);
+            if (Instance != null)
+                return Instance.TryMarkFatigueRoomVisited(cell);
+            lock (SyncRoot)
+                return _fatigueVisitedCells.Add(cell);
+        }
+
+        internal bool TryUnmarkFatigueRoomVisited(int mazeIndex, int cellX, int cellY)
+        {
+            var cell = new DungeonFatigueRoomCell(mazeIndex, cellX, cellY);
+            if (Instance != null)
+                return Instance.TryUnmarkFatigueRoomVisited(cell);
+            lock (SyncRoot)
+                return _fatigueVisitedCells.Remove(cell);
+        }
         public uint Seed { get => Combat.Seed; set => Combat.Seed = value; }
         public DnfLcg RoomLcg { get => Combat.RoomLcg; set => Combat.RoomLcg = value; }
         public List<RidableObjectSpawnEntry> RidableObjects { get => Combat.RidableObjects; set => Combat.RidableObjects = value; }
