@@ -134,18 +134,14 @@ namespace DfoServer.Network.Builders
 
             writer.WriteByte(initSnap.AckCharSlotIndex);
 
-            // pad0 + flag_count + flags[count], then two unused battery u16s.
-            // Live 86JP: empty list (297B ACK) → client auto ENTER/SELECT_DUNGEON
-            // 10000 + 008F flag=30 (opening tutorial). Pre-58be745 `00 01 4E`
-            // (298B) skipped that path. Do not empty this list to chase HUD.
             if (record.Level <= 1 && initSnap.AckTutorialSkipable == 0)
             {
-                writer.WriteByte(0x00);  // v15 pad
+                writer.WriteByte(0x00);  // v15 flag
                 writer.WriteByte(0x00);  // v16 count = 0
             }
             else
             {
-                writer.WriteByte(0x00);  // v15 pad
+                writer.WriteByte(0x00);  // v15 flag
                 writer.WriteByte(0x01);  // v16 count = 1
                 writer.WriteByte(0x4E);  // flagIndex = 78
             }

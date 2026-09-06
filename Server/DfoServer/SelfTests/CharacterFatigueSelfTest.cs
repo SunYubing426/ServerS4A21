@@ -328,8 +328,6 @@ namespace DfoServer.SelfTests
                 InitializationSnapshot = new SelectCharacterInitializationSnapshot
                 {
                     AckTutorialSkipable = 1,
-                    AckFatigueBattery = 0,
-                    AckFatigueGrownUpBuff = 0,
                 },
             };
             Check(
@@ -341,17 +339,11 @@ namespace DfoServer.SelfTests
                 return;
 
             Check(
-                "veteran ACK tutorial list is pad+count=1 flag 0x4E",
-                tutorialOffset + 6 < body.Length
+                "veteran ACK tutorial list is 00 01 4E",
+                tutorialOffset + 2 < body.Length
                 && body[tutorialOffset] == 0
                 && body[tutorialOffset + 1] == 1
                 && body[tutorialOffset + 2] == 0x4E,
-                ref failures);
-            Check(
-                "battery u16s stay 0/0 after the 0x4E tutorial flag",
-                tutorialOffset + 6 < body.Length
-                && BitConverter.ToUInt16(body, tutorialOffset + 3) == 0
-                && BitConverter.ToUInt16(body, tutorialOffset + 5) == 0,
                 ref failures);
 
             var newbie = new SelectCharacterDataSnapshot
@@ -365,18 +357,15 @@ namespace DfoServer.SelfTests
                 InitializationSnapshot = new SelectCharacterInitializationSnapshot
                 {
                     AckTutorialSkipable = 0,
-                    AckFatigueBattery = 0,
-                    AckFatigueGrownUpBuff = 0,
                 },
             };
             Check(
                 "level=1 unskipped ACK keeps empty tutorial list",
                 SelectCharacterAckBodyBuilder.TryBuild(newbie, out var newbieBody)
                 && newbieBody != null
-                && tutorialOffset + 5 < newbieBody.Length
+                && tutorialOffset + 1 < newbieBody.Length
                 && newbieBody[tutorialOffset] == 0
-                && newbieBody[tutorialOffset + 1] == 0
-                && newbieBody[tutorialOffset + 2] != 0x4E,
+                && newbieBody[tutorialOffset + 1] == 0,
                 ref failures);
         }
 
