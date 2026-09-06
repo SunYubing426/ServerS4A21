@@ -26,7 +26,7 @@ namespace DfoServer.SelfTests
             VerifyPartyConsumeIsAtomic(ref failures);
             VerifyDailyResetDoesNotRestoreSameDay(ref failures);
             VerifySelectCharacterAckWritesPersistedUsed(ref failures);
-            VerifySelectCharacterAckBatteryFollowsEmptyTutorialFlags(ref failures);
+            VerifySelectCharacterAckKeepsVeteranTutorialFlag(ref failures);
             VerifyEntryCostRules(ref failures);
             VerifyRoomVisitRules(ref failures);
             VerifyV26ToCurrentMigration(ref failures);
@@ -309,10 +309,15 @@ namespace DfoServer.SelfTests
             }
         }
 
-        private static void VerifySelectCharacterAckBatteryFollowsEmptyTutorialFlags(
+        private static void VerifySelectCharacterAckKeepsVeteranTutorialFlag(
             ref int failures)
         {
-            var snapshot = new SelectCharacterDataSnapshot
+            var tutorialOffset = 1 + 4 + 4 + 2 + 6 + 1
+                + 4
+                + QuestSlotLayout.ActiveSlotCount * 6
+                + QuestNotifySelectionService.MaxSlots * 4
+                + 1;
+            var veteran = new SelectCharacterDataSnapshot
             {
                 CharacterRecord = new CharacterRecord
                 {
@@ -329,29 +334,49 @@ namespace DfoServer.SelfTests
             };
             Check(
                 "level>1 ACK builds",
-                SelectCharacterAckBodyBuilder.TryBuild(snapshot, out var body)
+                SelectCharacterAckBodyBuilder.TryBuild(veteran, out var body)
                 && body != null,
                 ref failures);
             if (body == null)
                 return;
 
-            var tutorialOffset = 1 + 4 + 4 + 2 + 6 + 1
-                + 4
-                + QuestSlotLayout.ActiveSlotCount * 6
-                + QuestNotifySelectionService.MaxSlots * 4
-                + 1;
             Check(
-                "veteran ACK tutorial list is pad+count=0 without flag 0x4E",
-                tutorialOffset + 5 < body.Length
+                "veteran ACK tutorial list is pad+count=1 flag 0x4E",
+                tutorialOffset + 6 < body.Length
                 && body[tutorialOffset] == 0
-                && body[tutorialOffset + 1] == 0
-                && body[tutorialOffset + 2] != 0x4E,
+                && body[tutorialOffset + 1] == 1
+                && body[tutorialOffset + 2] == 0x4E,
                 ref failures);
             Check(
-                "fatigue battery HUD u16s are 0/0 immediately after empty flag list",
-                tutorialOffset + 5 < body.Length
-                && BitConverter.ToUInt16(body, tutorialOffset + 2) == 0
-                && BitConverter.ToUInt16(body, tutorialOffset + 4) == 0,
+                "battery u16s stay 0/0 after the 0x4E tutorial flag",
+                tutorialOffset + 6 < body.Length
+                && BitConverter.ToUInt16(body, tutorialOffset + 3) == 0
+                && BitConverter.ToUInt16(body, tutorialOffset + 5) == 0,
+                ref failures);
+
+            var newbie = new SelectCharacterDataSnapshot
+            {
+                CharacterRecord = new CharacterRecord
+                {
+                    CharacterId = 4003,
+                    CreatedAt = DateTime.UtcNow,
+                    Level = 1,
+                },
+                InitializationSnapshot = new SelectCharacterInitializationSnapshot
+                {
+                    AckTutorialSkipable = 0,
+                    AckFatigueBattery = 0,
+                    AckFatigueGrownUpBuff = 0,
+                },
+            };
+            Check(
+                "level=1 unskipped ACK keeps empty tutorial list",
+                SelectCharacterAckBodyBuilder.TryBuild(newbie, out var newbieBody)
+                && newbieBody != null
+                && tutorialOffset + 5 < newbieBody.Length
+                && newbieBody[tutorialOffset] == 0
+                && newbieBody[tutorialOffset + 1] == 0
+                && newbieBody[tutorialOffset + 2] != 0x4E,
                 ref failures);
         }
 
