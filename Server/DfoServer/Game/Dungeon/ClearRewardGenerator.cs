@@ -1,5 +1,6 @@
 using DfoServer.Game.Inventory;
 using DfoServer.GameWorld;
+using DfoServer.Infrastructure;
 using System;
 using System.Collections.Generic;
 
@@ -66,6 +67,88 @@ namespace DfoServer.Game.Dungeon
 
         internal static int GetPaidCardCost(int dungeonLevel) =>
             ClearRewardDefinitionCatalog.Current.GetPaidCardCost(dungeonLevel);
+
+        internal static bool TryPickPcRoomCardBlankItem(
+            ClearRewardDefinition definition,
+            Func<int, int> nextExclusive,
+            out CardReward reward)
+        {
+            reward = default;
+            if (definition == null || nextExclusive == null)
+                return false;
+
+            var items = definition.PcRoomCardBlankItems;
+            if (items == null || items.Count == 0)
+            {
+                FileLogger.Log(
+                    "[BlackDiamondCard] pcroom blank pool missing; extra card disabled");
+                return false;
+            }
+
+            long totalWeight = 0;
+            var activatable = 0;
+            foreach (var item in items)
+            {
+                if (!item.IsActivatable)
+                    continue;
+                activatable++;
+                totalWeight += item.Weight;
+                if (totalWeight > int.MaxValue)
+                {
+                    FileLogger.Log(
+                        "[BlackDiamondCard] pcroom blank weight overflow; extra card disabled");
+                    return false;
+                }
+            }
+
+            if (activatable == 0 || totalWeight <= 0)
+            {
+                FileLogger.Log(
+                    "[BlackDiamondCard] pcroom blank pool has no positive weight; extra card disabled");
+                return false;
+            }
+
+            int roll;
+            try
+            {
+                roll = nextExclusive((int)totalWeight);
+            }
+            catch (Exception ex)
+            {
+                FileLogger.Log(
+                    "[BlackDiamondCard] blank-item roll failed closed: " +
+                    ex.Message);
+                return false;
+            }
+
+            if (roll < 0 || roll >= totalWeight)
+            {
+                FileLogger.Log(
+                    "[BlackDiamondCard] blank-item roll out of range; extra card disabled");
+                return false;
+            }
+
+            var cumulative = 0L;
+            foreach (var item in items)
+            {
+                if (!item.IsActivatable)
+                    continue;
+                cumulative += item.Weight;
+                if (roll < cumulative)
+                {
+                    reward = new CardReward
+                    {
+                        ItemId = item.ItemId,
+                        StackCount = item.Count,
+                    };
+                    return true;
+                }
+            }
+
+            FileLogger.Log(
+                "[BlackDiamondCard] blank-item roll missed every activatable row");
+            return false;
+        }
 
         internal static CardReward GenerateFreeGoldCard(
             ClearRewardGenerationContext context,
@@ -139,6 +222,24 @@ namespace DfoServer.Game.Dungeon
                 lcg);
         }
 
+        // This-server black-diamond extra item policy. Numbers come from the
+        // current PVF pcroom default profile and the shared type/rarity/pool
+        // tables; this is not an official exact rate. mapRate is 1 so the
+        // extra card does not reuse the ordinary free-card exploration ratio.
+        // Profile probability, dungeon-difficulty bonus and death penalty stay.
+        internal static CardReward GenerateBlackDiamondItemCard(
+            ClearRewardGenerationContext context,
+            DnfLcg lcg,
+            ClearRewardDefinition definition = null)
+        {
+            return GenerateConfiguredItemCard(
+                context,
+                ClearRewardDropProfile.PcRoomDefault,
+                mapRate: 1.0,
+                lcg,
+                definition);
+        }
+
         // Legacy tower callers need a reward candidate, not the ordinary card
         // appearance roll. The item itself still comes from the clear-reward pool.
         public static CardReward GenerateItemCard(
@@ -189,12 +290,13 @@ namespace DfoServer.Game.Dungeon
             ClearRewardGenerationContext context,
             ClearRewardDropProfile profile,
             double mapRate,
-            DnfLcg lcg)
+            DnfLcg lcg,
+            ClearRewardDefinition definition = null)
         {
             if (lcg == null)
                 throw new ArgumentNullException(nameof(lcg));
 
-            var definition = ClearRewardDefinitionCatalog.Current;
+            definition = definition ?? ClearRewardDefinitionCatalog.Current;
             var baseProbability = definition.GetDropProbability(
                 profile,
                 context.DungeonLevel);
@@ -207,24 +309,26 @@ namespace DfoServer.Game.Dungeon
             if (lcg.Next(10000) >= threshold)
                 return default;
 
-            return GenerateConfiguredItem(context, lcg);
+            return GenerateConfiguredItem(context, lcg, definition);
         }
 
         private static CardReward GenerateConfiguredItem(
             ClearRewardGenerationContext context,
-            DnfLcg lcg)
+            DnfLcg lcg,
+            ClearRewardDefinition definition = null)
         {
-            var definition = ClearRewardDefinitionCatalog.Current;
+            definition = definition ?? ClearRewardDefinitionCatalog.Current;
             var itemType = RollItemType(definition, lcg);
             var rarity = RollRarity(definition, lcg);
-            return GenerateEquipment(context, itemType, rarity, lcg);
+            return GenerateEquipment(context, itemType, rarity, lcg, definition);
         }
 
         private static CardReward GenerateEquipment(
             ClearRewardGenerationContext context,
             int itemType,
             int rarity,
-            DnfLcg lcg)
+            DnfLcg lcg,
+            ClearRewardDefinition definition = null)
         {
             // The active A12 table enables only type 2 (ordinary equipment)
             // and type 4 (avatar). Types 1/3 stay fail-closed until their
@@ -232,7 +336,7 @@ namespace DfoServer.Game.Dungeon
             if (itemType != 2 && itemType != 4)
                 return default;
 
-            var definition = ClearRewardDefinitionCatalog.Current;
+            definition = definition ?? ClearRewardDefinitionCatalog.Current;
             var range = definition.GetGradeRange(context.DungeonLevel);
             var pool = EquipmentDropPoolProvider.GetClearRewardPool(
                 avatar: itemType == 4);

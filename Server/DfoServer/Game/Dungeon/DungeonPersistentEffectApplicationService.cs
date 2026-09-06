@@ -188,6 +188,10 @@ namespace DfoServer.Game.Dungeon
         public int RequestedGold { get; set; }
         public int ItemId { get; set; }
         public int StackCount { get; set; }
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+        public int ExtraItemId { get; set; }
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+        public int ExtraStackCount { get; set; }
     }
 
     internal sealed class CardRewardEffectMutation
@@ -585,6 +589,7 @@ namespace DfoServer.Game.Dungeon
             int paidGoldCost,
             bool consumeGoldCardContractUse,
             IReadOnlyList<ClearRewardGenerator.CardReward> cards,
+            BlackDiamondCardReward extra,
             out CardRewardPersistentCommitResult result,
             out string error)
         {
@@ -611,7 +616,8 @@ namespace DfoServer.Game.Dungeon
                     side,
                     paidGoldCost,
                     consumeGoldCardContractUse,
-                    cards);
+                    cards,
+                    extra);
                 _outbox.Enqueue(CreateDefinition(
                     effectId,
                     characterId,
@@ -1457,6 +1463,25 @@ namespace DfoServer.Game.Dungeon
                             (grantBatch?.Error.ToString() ?? "unknown"));
                     }
                     AddCardRewardChanges(changes, grantBatch.Changes);
+                    if (grantBatch.Results != null)
+                    {
+                        foreach (var entryResult in grantBatch.Results)
+                        {
+                            if (entryResult == null
+                                || entryResult.ListType != InventoryListType.Main
+                                || entryResult.SlotIndex
+                                    < InventoryService.MainVirtualCurrencySlotStart
+                                || entryResult.SlotIndex
+                                    > InventoryService.MainSlotEnd)
+                            {
+                                continue;
+                            }
+                            AddCardRewardChange(
+                                changes,
+                                InventoryListType.Main,
+                                entryResult.SlotIndex);
+                        }
+                    }
                     inventoryMutated = inventoryMutated
                         || grantBatch.Changes.HasChanges;
 
@@ -2442,7 +2467,8 @@ namespace DfoServer.Game.Dungeon
             CardRewardSide side,
             int paidGoldCost,
             bool consumeGoldCardContractUse,
-            IReadOnlyList<ClearRewardGenerator.CardReward> cards)
+            IReadOnlyList<ClearRewardGenerator.CardReward> cards,
+            BlackDiamondCardReward extra)
         {
             if (cards == null)
                 throw new ArgumentNullException(nameof(cards));
@@ -2469,6 +2495,11 @@ namespace DfoServer.Game.Dungeon
                     payload.RequestedGold = cards[0].GoldAmount;
                 }
                 CopyCardRewardItem(cards, index: 1, payload);
+                if (extra.HasItem)
+                {
+                    payload.ExtraItemId = extra.ItemId;
+                    payload.ExtraStackCount = extra.StackCount;
+                }
             }
             else if (side == CardRewardSide.Paid)
             {
@@ -2514,6 +2545,12 @@ namespace DfoServer.Game.Dungeon
             var itemValid = payload != null
                 && payload.ItemId > 0
                 && payload.StackCount > 0;
+            var extraEmpty = payload != null
+                && payload.ExtraItemId == 0
+                && payload.ExtraStackCount == 0;
+            var extraValid = payload != null
+                && payload.ExtraItemId > 0
+                && payload.ExtraStackCount > 0;
             if (payload == null
                 || record == null
                 || payload.CharacterId != record.CharacterId
@@ -2524,6 +2561,7 @@ namespace DfoServer.Game.Dungeon
                 || payload.PaidGoldCost < 0
                 || payload.RequestedGold < 0
                 || (!itemEmpty && !itemValid)
+                || (!extraEmpty && !extraValid)
                 || (free
                     && (!string.Equals(
                             record.EffectId.EffectKind,
@@ -2538,7 +2576,8 @@ namespace DfoServer.Game.Dungeon
                         || payload.RequestedGold != 0
                         || (payload.ConsumeGoldCardContractUse
                             && payload.PaidGoldCost != 0)
-                        || !itemValid)))
+                        || !itemValid
+                        || !extraEmpty)))
             {
                 throw new PermanentPersistentEffectException(
                     "Card reward payload is invalid.");
@@ -2589,6 +2628,13 @@ namespace DfoServer.Game.Dungeon
                 requests.Add(InventoryRewardGrantRequest.Create(
                     payload.ItemId,
                     payload.StackCount,
+                    ItemCreateReason.DungeonDrop));
+            }
+            if (payload.ExtraItemId > 0 && payload.ExtraStackCount > 0)
+            {
+                requests.Add(InventoryRewardGrantRequest.Create(
+                    payload.ExtraItemId,
+                    payload.ExtraStackCount,
                     ItemCreateReason.DungeonDrop));
             }
 

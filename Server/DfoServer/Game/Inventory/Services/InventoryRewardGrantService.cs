@@ -135,6 +135,8 @@ namespace DfoServer.Game.Inventory
 
         public IReadOnlyList<InventoryRewardGrantResult> Results => _results;
 
+        internal InventoryInsertPlan FailedInsertPlan { get; set; }
+
         public InventoryMutationSet Changes { get; } = new InventoryMutationSet();
 
         public IReadOnlyList<(int itemTemplateId, int count)> ActivatedPremiums => _activatedPremiums;
@@ -161,6 +163,8 @@ namespace DfoServer.Game.Inventory
         public InventoryRewardGrantError Error { get; set; }
 
         public IReadOnlyList<InventoryRewardGrantPlanEntry> Entries => _entries;
+
+        internal InventoryInsertPlan FailedInsertPlan { get; set; }
 
         internal void AddEntry(InventoryRewardGrantPlanEntry entry)
         {
@@ -346,6 +350,7 @@ namespace DfoServer.Game.Inventory
                     ? batchResult.Results[0]
                     : CreateResult(request);
                 result.Error = batchResult.Error;
+                result.InsertPlan ??= batchResult.FailedInsertPlan;
                 return false;
             }
 
@@ -377,6 +382,7 @@ namespace DfoServer.Game.Inventory
             if (!TryPlanBatch(inventory, requests, out var plan))
             {
                 result.Error = plan != null ? plan.Error : InventoryRewardGrantError.InvalidRequest;
+                result.FailedInsertPlan = plan?.FailedInsertPlan;
                 return false;
             }
 
@@ -463,8 +469,12 @@ namespace DfoServer.Game.Inventory
             var planningInventory = CreatePlanningInventory(inventory);
             for (var index = 0; index < requests.Count; index++)
             {
-                if (!TryPlanOne(planningInventory, requests[index], out var entry, out var error))
+                if (!TryPlanOne(planningInventory, requests[index], out var entry, out var error,
+                        out var failedInsertPlan))
+                {
+                    plan.FailedInsertPlan = failedInsertPlan;
                     return Fail(plan, error);
+                }
 
                 plan.AddEntry(entry);
             }
@@ -477,9 +487,11 @@ namespace DfoServer.Game.Inventory
             InventoryService planningInventory,
             InventoryRewardGrantRequest request,
             out InventoryRewardGrantPlanEntry entry,
-            out InventoryRewardGrantError error)
+            out InventoryRewardGrantError error,
+            out InventoryInsertPlan failedInsertPlan)
         {
             entry = null;
+            failedInsertPlan = null;
             if (!TryNormalizeRequest(request, out var itemTemplateId, out var count, out error))
                 return false;
 
@@ -518,6 +530,9 @@ namespace DfoServer.Game.Inventory
             var insertCount = InventoryStackRuleService.NormalizeInsertCount(core, count);
             if (!InventoryInsertService.TryPlanInsertByDefaultRule(planningInventory, core, insertCount, out var insertPlan))
             {
+                // Retain the precise failure without changing the public grant error
+                // used by mailbox/quest/consumable callers, or exposing a granted item.
+                failedInsertPlan = insertPlan;
                 LogInventoryInsertFailure(
                     planningInventory,
                     itemTemplateId,

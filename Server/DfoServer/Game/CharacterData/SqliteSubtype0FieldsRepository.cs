@@ -1,6 +1,7 @@
 using System;
 using Microsoft.Data.Sqlite;
 using DfoServer.Game.Inventory;
+using DfoServer.Game.Premium;
 using DfoServer.Game.SelectCharacter;
 using DfoServer.Infrastructure;
 
@@ -156,12 +157,26 @@ namespace DfoServer.Game.CharacterData
                 return;
 
             ClearDynamicTailFields(snapshot);
+            snapshot.BlackDiamondEligible = LoadBlackDiamondEligibility(conn, characterId);
             LoadNameTagFields(conn, characterId, snapshot);
             var projectionBuilder = new Noti2InventoryProjectionBuilder();
             if (InventoryContext.TryGetLease(characterId, out var lease))
             {
                 lock (lease.SyncRoot)
                     projectionBuilder.ApplySubtype0TailDynamicFields(lease.Inventory, snapshot);
+            }
+        }
+
+        private static bool LoadBlackDiamondEligibility(SqliteConnection connection, int characterId)
+        {
+            // 从真实角色归属解析账号，不保存第二份角色资格；重载和动态刷新都会重新判定到期。
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "SELECT account_id FROM characters WHERE character_id=@cid;";
+                command.Parameters.AddWithValue("@cid", characterId);
+                var value = command.ExecuteScalar();
+                return value != null && value != DBNull.Value
+                    && PremiumService.HasActiveBlackDiamond(connection, Convert.ToInt32(value));
             }
         }
 

@@ -2236,6 +2236,7 @@ LIMIT 1;";
             result = new MailboxSendResult
             {
                 Success = true,
+                IdempotencyReplay = true,
                 Error = MailboxSendError.None,
                 MessageId = messageId,
                 FeeGold = feeGold,

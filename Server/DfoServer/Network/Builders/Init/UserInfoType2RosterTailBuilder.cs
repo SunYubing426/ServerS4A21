@@ -30,7 +30,9 @@ namespace DfoServer.Network.Builders
             writer.WriteByte(0x00); // tail_flag31
         }
 
-        public static void WriteA21(GamePacketWriter writer, uint cloneTitleItemId)
+        internal const int A21BlackDiamondOffset = 23;
+
+        public static void WriteA21(GamePacketWriter writer, uint cloneTitleItemId, bool blackDiamondEligible = false)
         {
             writer.WriteUInt32(cloneTitleItemId);
             writer.WriteByte(0x00);
@@ -43,7 +45,7 @@ namespace DfoServer.Network.Builders
             writer.WriteUInt32(0);
             writer.WriteByte(0x00);
             writer.WriteByte(0x00);
-            writer.WriteByte(0x00);
+            writer.WriteByte(blackDiamondEligible ? (byte)1 : (byte)0); // +23，13E8906 -> userData+2E8
             writer.WriteByte(0x00);
             writer.WriteByte(0x00);
             writer.WriteByte(0x00);

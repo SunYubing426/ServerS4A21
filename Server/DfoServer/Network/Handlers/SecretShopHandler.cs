@@ -3,6 +3,8 @@ using DfoServer.Game.Inventory;
 using DfoServer.Network.Builders;
 using DfoServer.Network.Parsers;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace DfoServer.Network.Handlers
@@ -84,14 +86,41 @@ namespace DfoServer.Network.Handlers
                 await _refresh.SendGoldUpdate(session);
             }
 
-            await _refresh.SendUpdateItemList(session, InventoryListType.Main, result.AssignedSlot);
-            if (result.RequiredItemId > 0)
-                await _refresh.SendUpdateItemList(session, InventoryListType.Main, result.CostItemSlot);
+            foreach (var group in GroupSlotRefreshes(result.SlotRefreshes))
+            {
+                await _refresh.SendUpdateItemList(session, group.ListType, group.Slots);
+            }
 
             FileLogger.Log(
                 $"[SecretShop] BUY success: char={characterId} npc={offer.NpcId} item={result.ItemId} " +
                 $"count={result.ItemCount} goldCost={result.GoldCost} required={result.RequiredItemId}:{result.RequiredItemCount} " +
-                $"slot={result.AssignedSlot} gold={result.UpdatedGold}");
+                $"slot={result.AssignedSlot} refresh={result.SlotRefreshes.Count} gold={result.UpdatedGold}");
         }
+
+        internal static IReadOnlyList<SecretShopRefreshGroup> GroupSlotRefreshes(
+            IReadOnlyList<SecretShopSlotRefresh> slots)
+        {
+            if (slots == null || slots.Count == 0)
+                return Array.Empty<SecretShopRefreshGroup>();
+
+            return slots
+                .GroupBy(slot => slot.ListType)
+                .Select(group => new SecretShopRefreshGroup(
+                    group.Key,
+                    group.Select(slot => slot.Slot).Distinct().ToArray()))
+                .ToArray();
+        }
+    }
+
+    internal readonly struct SecretShopRefreshGroup
+    {
+        internal SecretShopRefreshGroup(InventoryListType listType, IReadOnlyList<short> slots)
+        {
+            ListType = listType;
+            Slots = slots ?? Array.Empty<short>();
+        }
+
+        internal InventoryListType ListType { get; }
+        internal IReadOnlyList<short> Slots { get; }
     }
 }

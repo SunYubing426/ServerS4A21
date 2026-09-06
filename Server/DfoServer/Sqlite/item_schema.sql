@@ -614,6 +614,7 @@ CREATE TABLE IF NOT EXISTS character_subtype0_fields (
     creature_field4 INTEGER NOT NULL DEFAULT 0,         -- +7  u8 (客户端读后未用)
     creature_buffer BLOB,                               -- +8  8B i64; low32!=0 → 创建宠物实体到 slot 24 (sub_F55120)
     stamina INTEGER NOT NULL DEFAULT 0,                 -- +16 u8  体力 (readEntryByteOffset648)
+    stamina_recover_end_unix INTEGER NOT NULL DEFAULT 0, -- 服务端私有：虚弱自然恢复截止 Unix 秒
     fatigue_penalty INTEGER NOT NULL DEFAULT 0,         -- +17 u32 疲劳恢复惩罚 (readEntryDwordOffset672)
     is_event_character INTEGER NOT NULL DEFAULT 0,      -- +21 u8
     pc_room_id INTEGER NOT NULL DEFAULT 65537,          -- +22 u32 (sub_F502B0; 真机无PC房=0x00010001)

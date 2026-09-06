@@ -33,7 +33,6 @@ namespace DfoServer.Network.Handlers.Dungeon
         private const int SetPlayResultRankPointOffset = 10;
         // 成长之契约经验加成从 PVF premiumlist_new.etc 读取(PremiumEffectProvider)。
         private const float BlackDiamondBonusRate = 0.10f;
-        private static readonly int[] BlackDiamondPremiumTypes = { 1, 17 };
 
         internal DungeonSettlementHandler(
             DungeonSharedServices svc,
@@ -614,7 +613,11 @@ namespace DfoServer.Network.Handlers.Dungeon
                                     freeCardItemCount: settlement.FreeItem.StackCount,
                                     paidCardCost: settlement.PaidCardCost,
                                     objectExperienceEntries:
-                                        settlement.ObjectExperienceEntries)))))
+                                        settlement.ObjectExperienceEntries,
+                                    extraCardItemId:
+                                        settlement.BlackDiamondCardReward.ItemId,
+                                    extraCardItemCount:
+                                        settlement.BlackDiamondCardReward.StackCount)))))
                 {
                     run.Effects.TryFail(presentationReservation);
                     return;
@@ -1405,6 +1408,19 @@ namespace DfoServer.Network.Handlers.Dungeon
                     default,
                 }
                 : null;
+            var blackDiamondCard = default(BlackDiamondCardReward);
+            if (shouldScheduleCardRewardFlow)
+            {
+                blackDiamondCard = run.FreezeBlackDiamondCardReward(
+                    BlackDiamondCardRules.IsEligible(
+                        run.DungeonId,
+                        presentationKind,
+                        session.Account?.AccountId ?? 0,
+                        _svc.ConnectionString),
+                    ServerRandom.Next,
+                    rewardContext,
+                    lcg);
+            }
 
             if (shouldScheduleCardRewardFlow)
             {
@@ -1418,7 +1434,11 @@ namespace DfoServer.Network.Handlers.Dungeon
                     $"{rewardContext.BossKillCount} " +
                     $"freeGold={freeGold.GoldAmount} freeItem={freeItem.ItemId} " +
                     $"paidCost={paidCardCost} paidContract={paidCardUsesDevilContract} " +
-                    $"paidItem={paidItem.ItemId}");
+                    $"paidItem={paidItem.ItemId} " +
+                    "blackDiamondCard=" +
+                    (blackDiamondCard.HasItem
+                        ? blackDiamondCard.ItemId + "x" + blackDiamondCard.StackCount
+                        : blackDiamondCard.Frozen ? "miss" : "none"));
             }
 
             var monsterExperience = run.CaptureExperienceSnapshot();
@@ -1467,6 +1487,7 @@ namespace DfoServer.Network.Handlers.Dungeon
                 PaidCardUsesDevilContract = paidCardUsesDevilContract,
                 FreeGold = freeGold,
                 FreeItem = freeItem,
+                BlackDiamondCardReward = blackDiamondCard,
                 TowerRewardCandidates = towerRewardCandidates,
                 MonsterTotalExp = monsterExperience.MonsterTotalExperience,
                 BossTotalExp = Math.Min(
@@ -1926,7 +1947,7 @@ namespace DfoServer.Network.Handlers.Dungeon
             var premiumEffects = Game.Premium.PremiumEffectProvider.GetCombinedEffects(connStr, accountId);
             var growthContractBonus = premiumEffects.ComputeBonusExp(
                 storyAdjustedBaseExp);
-            var blackDiamondBonus = PremiumService.HasActivePremium(connStr, accountId, BlackDiamondPremiumTypes)
+            var blackDiamondBonus = PremiumService.HasActiveBlackDiamond(connStr, accountId)
                 ? ToUInt32Floor(
                     storyAdjustedBaseExp * BlackDiamondBonusRate)
                 : 0;
@@ -2476,7 +2497,7 @@ namespace DfoServer.Network.Handlers.Dungeon
                 var standardPresentation = clearFact.PresentationKind
                     == DungeonClearPresentationKind.Standard;
                 var offer = standardPresentation
-                    ? run.SecretShopOffer ?? CreateSecretShopOffer(run)
+                    ? run.SecretShopOffer ?? CreateSecretShopOffer(session, run)
                     : null;
                 if (standardPresentation)
                 {
@@ -3163,17 +3184,23 @@ namespace DfoServer.Network.Handlers.Dungeon
             return connection[1];
         }
 
-        private static SecretShopOffer CreateSecretShopOffer(DungeonRun run)
+        private SecretShopOffer CreateSecretShopOffer(
+            EnhancedClientSession session,
+            DungeonRun run)
         {
             try
             {
                 var dungeonBasisLevel = DungeonData.GetDungeonBasicLv(run.DungeonId);
+                var accountId = session?.Account?.AccountId ?? 0;
                 return SecretShopOfferFactory.Create(
                     SecretShopCatalogProvider.Current,
                     run.DungeonId,
                     dungeonBasisLevel,
-                    partySize: 1,
-                    ServerRandom.Next);
+                    run.EntryPartyMemberCount,
+                    ServerRandom.Next,
+                    SecretShopOfferFactory.ResolveMemberPolicy(
+                        _svc.ConnectionString,
+                        accountId));
             }
             catch (Exception ex)
             {

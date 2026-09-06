@@ -448,7 +448,9 @@ namespace DfoServer.Network.Builders
             uint monsterExp = 0, int bossExp = 0, int championExp = 0, int superChampionExp = 0,
             int freeCardGold = 0, int freeCardItemId = 0, int freeCardItemCount = 0,
             int paidCardCost = 0,
-            IReadOnlyList<DungeonObjectExperienceEntry> objectExperienceEntries = null)
+            IReadOnlyList<DungeonObjectExperienceEntry> objectExperienceEntries = null,
+            int extraCardItemId = 0,
+            int extraCardItemCount = 0)
         {
             var w = new GamePacketWriter();
             // A12 wrote the aggregate monster EXP into its fixed tail. Current
@@ -548,10 +550,21 @@ namespace DfoServer.Network.Builders
 
             w.WriteInt32(Math.Max(0, paidCardCost));
 
-            for (int i = 0; i < 8; i++)
-                w.WriteByte(0);
-            for (int i = 0; i < 8; i++)
-                w.WriteByte(0);
+            // kind1=GOLD extra, always empty this batch. kind2=black-diamond
+            // extra on local seat 0 (native NPK: reward.img/100 GOLD,
+            // pcroompremiumreward.img/1 黑钻奖励; binding: 25F970F/25F9751).
+            // Awarded kind2 is count=2: (0,0) gold slot then (itemId,stack),
+            // matching ordinary free/paid first-pair gold. See helper.
+            WriteClearExtraCardFamily(
+                w,
+                awardOnLocalSeat: false,
+                itemId: 0,
+                count: 0);
+            WriteClearExtraCardFamily(
+                w,
+                awardOnLocalSeat: extraCardItemId > 0 && extraCardItemCount > 0,
+                itemId: extraCardItemId,
+                count: extraCardItemCount);
 
             w.WriteInt32(0);                // tail card item id
             w.WriteByte(0);                 // end flag A
@@ -562,6 +575,35 @@ namespace DfoServer.Network.Builders
                 w.WriteByte(0);
 
             return w.ToArray();
+        }
+
+        private static void WriteClearExtraCardFamily(
+            GamePacketWriter w,
+            bool awardOnLocalSeat,
+            int itemId,
+            int count)
+        {
+            for (var seat = 0; seat < 8; seat++)
+            {
+                if (awardOnLocalSeat
+                    && seat == BlackDiamondCardRules.LocalSeatIndex
+                    && itemId > 0
+                    && count > 0)
+                {
+                    // A21 25F4798 renders pair 0 as gold; 25F412A draws
+                    // the item only from pair 1. Keep the zero-gold wire
+                    // slot even for item-only rewards; it is not a grant.
+                    // See Docs/黑钻奖励与加百利特权.md for the consumer contract.
+                    w.WriteByte(2);
+                    w.WriteUInt32(0);
+                    w.WriteUInt32(0);
+                    w.WriteUInt32((uint)itemId);
+                    w.WriteUInt32((uint)count);
+                    continue;
+                }
+
+                w.WriteByte(0);
+            }
         }
 
         private static int SaturatingSum(int first, int second, int third)

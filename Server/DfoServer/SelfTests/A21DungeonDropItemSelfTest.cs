@@ -829,7 +829,7 @@ SELECT bonus_sp FROM characters WHERE character_id = @cid;";
             }
         }
 
-        private sealed class LoopbackPacketCapture : IDisposable
+        internal sealed class LoopbackPacketCapture : IDisposable
         {
             private readonly TcpClient _reader;
 
