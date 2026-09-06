@@ -1,4 +1,5 @@
 using DfoServer.Game.Characters;
+using DfoServer.Game.Dungeon;
 using DfoServer.Game.Quests;
 using DfoServer.Game.SelectCharacter;
 using DfoServer.GameWorld;
@@ -50,13 +51,29 @@ namespace DfoServer.Network.Builders
             // [9] u16 uniqueId
             writer.WriteInt16(record != null ? (short)record.CharacterId : (short)initSnap.AckUniqueId);
 
-            // [11] i16 totalFatigue
+            var maxFatigue = CharacterFatigueService.DefaultMaxFatigue;
+            var usedFatigue = 0;
+            if (record != null
+                && record.CharacterId > 0
+                && !string.IsNullOrWhiteSpace(connectionString))
+            {
+                try
+                {
+                    var fatigue = new CharacterFatigueService(connectionString)
+                        .Load(record.CharacterId);
+                    maxFatigue = fatigue.Max;
+                    usedFatigue = fatigue.Used;
+                }
+                catch
+                {
+                }
+            }
+
+            // [11] i16 extra/bonus fatigue — no owner yet; keep 0.
             writer.WriteInt16(0);
-
-            writer.WriteInt16(188);
-
+            writer.WriteInt16(ToInt16(maxFatigue));
             // [15] i16 usedFatigue
-            writer.WriteInt16(0);
+            writer.WriteInt16(ToInt16(usedFatigue));
 
             // [17] u8 premiumCount + N × (u8 type + u8[8] endTime)
             var premiums = initSnap.AckPremiums;
@@ -141,6 +158,15 @@ namespace DfoServer.Network.Builders
 
             body = writer.ToArray();
             return true;
+        }
+
+        private static short ToInt16(int value)
+        {
+            if (value < short.MinValue)
+                return short.MinValue;
+            if (value > short.MaxValue)
+                return short.MaxValue;
+            return (short)value;
         }
     }
 }

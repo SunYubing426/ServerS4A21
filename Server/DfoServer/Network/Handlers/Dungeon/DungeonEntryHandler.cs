@@ -1289,6 +1289,13 @@ namespace DfoServer.Network.Handlers.Dungeon
             {
                 return;
             }
+            if (!await TryValidateFatigueAsync(
+                    session,
+                    header.type,
+                    req.DungeonId))
+            {
+                return;
+            }
 
             // 塔类副本分流: dungeonKind==1 走专属流程(NOTI 142+143, 非普通副本的 START_MAP)
             if (_svc.DeathTower.TryCreateSession(req.DungeonId, out var tower))
@@ -1367,6 +1374,14 @@ namespace DfoServer.Network.Handlers.Dungeon
                         towerRun,
                         entryLimitDungeonId,
                         isDimensionDungeon))
+                {
+                    return;
+                }
+                if (!await TryConsumeFatigueAsync(
+                        session,
+                        header.type,
+                        towerRun,
+                        req.DungeonId))
                 {
                     return;
                 }
@@ -1649,6 +1664,15 @@ namespace DfoServer.Network.Handlers.Dungeon
                     run,
                     entryLimitDungeonId,
                     isDimensionDungeon))
+            {
+                RollbackLicensedDungeonEntry(licensedDungeonPlan);
+                return;
+            }
+            if (!await TryConsumeFatigueAsync(
+                    session,
+                    header.type,
+                    run,
+                    req.DungeonId))
             {
                 RollbackLicensedDungeonEntry(licensedDungeonPlan);
                 return;
@@ -2424,6 +2448,149 @@ namespace DfoServer.Network.Handlers.Dungeon
                 : _svc.PartyManager?.GetPartyByUser(session.Player.UserId);
             var member = party?.GetMember(session.Player.UserId);
             return member?.SlotIndex ?? 0;
+        }
+
+        private List<CharacterFatigueTarget> ResolveFatigueTargets(
+            EnhancedClientSession session)
+        {
+            var targets = new List<CharacterFatigueTarget>();
+            var party = session?.Player == null
+                ? null
+                : _svc.PartyManager?.GetPartyByUser(session.Player.UserId);
+            if (party != null && party.Count > 1)
+            {
+                foreach (var member in party.Members)
+                {
+                    if (member.CharacterId > 0)
+                    {
+                        targets.Add(
+                            new CharacterFatigueTarget(
+                                member.CharacterId,
+                                member.SlotIndex));
+                    }
+                }
+            }
+
+            if (targets.Count == 0)
+            {
+                var characterId = session?.Player?.CharacterId ?? 0;
+                if (characterId > 0)
+                {
+                    targets.Add(
+                        new CharacterFatigueTarget(
+                            characterId,
+                            ResolvePartySlot(session)));
+                }
+            }
+
+            return targets;
+        }
+
+        private static int ResolveFatigueCost(int dungeonId)
+        {
+            if (dungeonId <= 0)
+                return 0;
+
+            try
+            {
+                return CharacterFatigueService.ResolveEntryCost(
+                    DungeonData.GetDungeonFile(dungeonId));
+            }
+            catch
+            {
+                return CharacterFatigueService.DefaultEntryCost;
+            }
+        }
+
+        private async Task<bool> TryValidateFatigueAsync(
+            EnhancedClientSession session,
+            ushort wireType,
+            int dungeonId)
+        {
+            var cost = ResolveFatigueCost(dungeonId);
+            if (cost <= 0)
+                return true;
+
+            var targets = ResolveFatigueTargets(session);
+            if (targets.Count == 0)
+            {
+                await _svc.AdmissionRejects.SendAsync(
+                    session,
+                    wireType,
+                    DungeonAdmissionReject.InvalidSelectionState);
+                return false;
+            }
+
+            if (!_svc.Fatigue.TryCheckMany(targets, cost, out var result)
+                || result?.Allowed != true)
+            {
+                FileLogger.Log(
+                    $"[{DungeonSharedServices.ProtocolLogName}] " +
+                    $"SELECT_DUNGEON fatigue rejected: " +
+                    $"cid={session?.Player?.CharacterId ?? 0} " +
+                    $"dungeon={dungeonId} cost={cost} " +
+                    $"slot={result?.MemberSlot ?? 0} " +
+                    $"used={result?.Used ?? 0} max={result?.Max ?? 0} " +
+                    $"reason={result?.Reason ?? "unknown"}");
+                await _svc.AdmissionRejects.SendAsync(
+                    session,
+                    wireType,
+                    DungeonAdmissionReject.InsufficientFatigue(
+                        result?.MemberSlot ?? 0));
+                return false;
+            }
+
+            return true;
+        }
+
+        private async Task<bool> TryConsumeFatigueAsync(
+            EnhancedClientSession session,
+            ushort wireType,
+            DungeonRun run,
+            int dungeonId)
+        {
+            var cost = ResolveFatigueCost(dungeonId);
+            if (cost <= 0)
+                return true;
+
+            var targets = ResolveFatigueTargets(session);
+            if (targets.Count == 0)
+            {
+                await RejectEntryLimitAsync(
+                    session,
+                    wireType,
+                    run,
+                    DungeonAdmissionReject.InvalidSelectionState);
+                return false;
+            }
+
+            if (!_svc.Fatigue.TryConsumeMany(targets, cost, out var result)
+                || result?.Allowed != true)
+            {
+                FileLogger.Log(
+                    $"[{DungeonSharedServices.ProtocolLogName}] " +
+                    $"SELECT_DUNGEON fatigue consume rejected: " +
+                    $"cid={session?.Player?.CharacterId ?? 0} " +
+                    $"dungeon={dungeonId} cost={cost} " +
+                    $"slot={result?.MemberSlot ?? 0} " +
+                    $"used={result?.Used ?? 0} max={result?.Max ?? 0} " +
+                    $"reason={result?.Reason ?? "unknown"}");
+                await RejectEntryLimitAsync(
+                    session,
+                    wireType,
+                    run,
+                    DungeonAdmissionReject.InsufficientFatigue(
+                        result?.MemberSlot ?? 0));
+                return false;
+            }
+
+            FileLogger.Log(
+                $"[{DungeonSharedServices.ProtocolLogName}] " +
+                $"SELECT_DUNGEON fatigue consumed: " +
+                $"cid={session?.Player?.CharacterId ?? 0} " +
+                $"dungeon={dungeonId} cost={cost} members={targets.Count} " +
+                $"used={result.Used} max={result.Max}");
+            return true;
         }
 
         private async Task<bool> TryValidateEntryLimitAsync(

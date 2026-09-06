@@ -1,6 +1,7 @@
 using DfoServer.Game.Accounts;
 using DfoServer.Game.Appearance;
 using DfoServer.Game.DailyReset;
+using DfoServer.Game.Dungeon;
 using DfoServer.Game.Characters;
 using DfoServer.Game.Friends;
 using DfoServer.Game.Inventory;
@@ -37,6 +38,7 @@ namespace DfoServer.Network.Handlers
         private readonly GrowthCapsuleSyncService _growthCapsule;
         private readonly IMercenaryRestrictionService _mercenaryRestrictions;
         private readonly DailyResetService _dailyResetService;
+        private readonly CharacterFatigueService _characterFatigue;
         private readonly Game.Dungeon.DungeonPersistentEffectApplicationService
             _dungeonPersistentEffects;
         private readonly Game.Dungeon.DungeonInstanceRegistry _dungeonInstances;
@@ -98,6 +100,7 @@ namespace DfoServer.Network.Handlers
             _growthCapsule = new GrowthCapsuleSyncService(_characterRepository, _database);
             _mercenaryRestrictions = mercenaryRestrictions;
             _dailyResetService = dailyResetService ?? new DailyResetService(_database);
+            _characterFatigue = new CharacterFatigueService(_database);
             _dungeonPersistentEffects = dungeonPersistentEffects;
             _dungeonInstances = dungeonInstances;
             _subtype0Repository = new Game.CharacterData.SqliteSubtype0FieldsRepository(
@@ -278,6 +281,14 @@ namespace DfoServer.Network.Handlers
                         (conn, tx) =>
                         {
                             if (!_dailyResetService.ResetUsableCountLimitsForAccount(
+                                    conn,
+                                    tx,
+                                    accountId))
+                            {
+                                return false;
+                            }
+
+                            if (!_characterFatigue.ResetUsedForAccount(
                                     conn,
                                     tx,
                                     accountId))

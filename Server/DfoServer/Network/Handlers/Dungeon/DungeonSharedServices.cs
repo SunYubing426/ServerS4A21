@@ -57,6 +57,7 @@ namespace DfoServer.Network.Handlers.Dungeon
         internal Game.Dungeon.DungeonEntryAdmissionApplicationService
             EntryAdmission { get; }
         internal Game.Dungeon.DungeonEntryLimitService EntryLimits { get; }
+        internal Game.Dungeon.CharacterFatigueService Fatigue { get; }
         internal DungeonAdmissionRejectSender AdmissionRejects { get; }
         internal DungeonProgressNotificationProjector ProgressNotifications { get; }
         internal DungeonTownReturnCoordinator TownReturn { get; }
@@ -174,6 +175,7 @@ namespace DfoServer.Network.Handlers.Dungeon
                 new Game.Dungeon.DungeonEntryAdmissionApplicationService(
                     entryCost);
             EntryLimits = new Game.Dungeon.DungeonEntryLimitService(Database);
+            Fatigue = new Game.Dungeon.CharacterFatigueService(Database);
             Tournaments =
                 new Game.Dungeon.Tournament
                     .TournamentDungeonApplicationService();

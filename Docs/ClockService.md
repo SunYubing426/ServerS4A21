@@ -64,7 +64,7 @@
 | 心跳包、连接检查、服务间 heartbeat | 是 | 旧服 `TimerCheckConn` / `Timer_HadesHeartBeat` 有依据。必须校验 session/version, 断线要清理。 |
 | 在线挂机、在线停留、在线奖励提醒 | 可以 | timer 只做在线巡检、提醒或投递已有待处理任务。发奖必须走领取校验或落库记账。 |
 | 虚弱/stamina 在线恢复 UI | 可以 | 在线 tick 可用; 离线恢复必须用 `recover_end_unix` 或等价持久化状态在登录/查看时结算。 |
-| 疲劳、副本次数、活动每日/每周重置 | 不作为权威 | `DailyResetService` / 读写时结算是权威。timer 只负责在线广播、缓存刷新、兼容旧协议瞬时通知。 |
+| 疲劳、副本次数、活动每日/每周重置 | 不作为权威 | `DailyResetService` / 读写时结算是权威。疲劳剩余由 `CharacterFatigueService` 持久化；跨日清零挂在选角 `TryRunAccountFirstLoginReset`。timer 只负责在线广播、缓存刷新、兼容旧协议瞬时通知。 |
 | 租赁、会员、拍卖、道具期限、头像/宠物期限 | 不作为权威 | 保存绝对到期时间, 登录/使用时读库判定。timer 只做在线提醒或当前会话清理。 |
 | 日志、统计、在线时长批处理 | 可以 | 可用固定时刻 timer 触发统计落库, 但不能影响玩家状态正确性。 |
 
