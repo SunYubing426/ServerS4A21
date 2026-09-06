@@ -1386,6 +1386,13 @@ namespace DfoServer.Network.Handlers.Dungeon
                 {
                     return;
                 }
+                if (!await TryChargeFirstTowerStageAsync(
+                        session,
+                        header.type,
+                        towerRun))
+                {
+                    return;
+                }
                 RegisterActiveParticipant(session, towerRun);
                 // 城镇残留白影：塔进本提交后离开城镇，向旧区域广播不含离开者的名册清残留白影。
                 await NotifyTownAreaRosterDepartureAsync(session);
@@ -2451,42 +2458,6 @@ namespace DfoServer.Network.Handlers.Dungeon
             return member?.SlotIndex ?? 0;
         }
 
-        private List<CharacterFatigueTarget> ResolveFatigueTargets(
-            EnhancedClientSession session)
-        {
-            var targets = new List<CharacterFatigueTarget>();
-            var party = session?.Player == null
-                ? null
-                : _svc.PartyManager?.GetPartyByUser(session.Player.UserId);
-            if (party != null && party.Count > 1)
-            {
-                foreach (var member in party.Members)
-                {
-                    if (member.CharacterId > 0)
-                    {
-                        targets.Add(
-                            new CharacterFatigueTarget(
-                                member.CharacterId,
-                                member.SlotIndex));
-                    }
-                }
-            }
-
-            if (targets.Count == 0)
-            {
-                var characterId = session?.Player?.CharacterId ?? 0;
-                if (characterId > 0)
-                {
-                    targets.Add(
-                        new CharacterFatigueTarget(
-                            characterId,
-                            ResolvePartySlot(session)));
-                }
-            }
-
-            return targets;
-        }
-
         private static int ResolveFatigueCost(int dungeonId)
         {
             if (dungeonId <= 0)
@@ -2512,7 +2483,7 @@ namespace DfoServer.Network.Handlers.Dungeon
             if (cost <= 0)
                 return true;
 
-            var targets = ResolveFatigueTargets(session);
+            var targets = _svc.ResolveFatigueTargets(session);
             if (targets.Count == 0)
             {
                 await _svc.AdmissionRejects.SendAsync(
@@ -2550,11 +2521,14 @@ namespace DfoServer.Network.Handlers.Dungeon
             DungeonRun run,
             int dungeonId)
         {
+            if (!ChargesFatigueOnlyAtSelect(dungeonId))
+                return true;
+
             var cost = ResolveFatigueCost(dungeonId);
             if (cost <= 0)
                 return true;
 
-            var targets = ResolveFatigueTargets(session);
+            var targets = _svc.ResolveFatigueTargets(session);
             if (targets.Count == 0)
             {
                 await RejectEntryLimitAsync(
@@ -2591,26 +2565,54 @@ namespace DfoServer.Network.Handlers.Dungeon
                 $"cid={session?.Player?.CharacterId ?? 0} " +
                 $"dungeon={dungeonId} cost={cost} members={targets.Count} " +
                 $"used={result.Used} max={result.Max}");
-            await NotifyFatigueAsync(targets);
+            await _svc.NotifyFatigueAsync(targets);
             return true;
         }
 
-        private async Task NotifyFatigueAsync(
-            IReadOnlyList<CharacterFatigueTarget> targets)
+        private async Task<bool> TryChargeFirstTowerStageAsync(
+            EnhancedClientSession session,
+            ushort wireType,
+            DungeonRun run)
         {
-            if (targets == null || targets.Count == 0 || _svc.Sessions == null)
-                return;
+            if (ChargesFatigueOnlyAtSelect(run?.DungeonId ?? 0))
+                return true;
 
-            foreach (var target in targets)
+            var stage = run?.Tower?.CurrentStage ?? 0;
+            if (!_svc.TryChargeFatigueRoomVisit(
+                    session,
+                    run,
+                    mazeIndex: 0,
+                    cellX: stage,
+                    cellY: 0,
+                    "death_tower_start",
+                    out var result)
+                || result?.Allowed != true)
             {
-                var snapshot = _svc.Fatigue.Load(target.CharacterId);
-                await _svc.Sessions.SendToAsync(
-                    target.CharacterId,
-                    GamePacketEnvelopeBuilder.Build(
-                        0x00,
-                        (ushort)NotiPacketTypeA21.FATIGUE,
-                        CharacterFatiguePacketBuilder.BuildNotification(
-                            snapshot)));
+                await RejectEntryLimitAsync(
+                    session,
+                    wireType,
+                    run,
+                    DungeonAdmissionReject.InsufficientFatigue(
+                        result?.MemberSlot ?? 0));
+                return false;
+            }
+
+            if (result.Cost > 0)
+                await _svc.NotifyFatigueAsync(session);
+            return true;
+        }
+
+        private static bool ChargesFatigueOnlyAtSelect(int dungeonId)
+        {
+            try
+            {
+                return dungeonId > 0
+                    && CharacterFatigueService.ChargesOnlyAtSelectDungeon(
+                        DungeonData.GetDungeonFile(dungeonId));
+            }
+            catch
+            {
+                return false;
             }
         }
 

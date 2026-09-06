@@ -34,8 +34,12 @@ namespace DfoServer.Network.Handlers.Dungeon
             var leaderRunIdentity = run.CaptureIdentity();
 
             // 塔内分流: 在塔中时 MOVE_MAP = 推进下一层(不走普通地图切换)
+            // A21 无独立塔疲劳协议证据；按每层首次进入扣与普通房间相同的访问费用。
+            // MOVE_MAP 本身没有已验证的客户端拒包，疲劳不足 fail closed：不推进、只记日志。
             if (run.Tower != null)
             {
+                if (!await TryChargeTowerMoveMapAsync(session, run))
+                    return;
                 if (await _svc.DeathTower.TryHandleMoveMap(session))
                     return;
                 if (!session.Player.IsCurrentDungeonRun(leaderRunIdentity))
@@ -151,6 +155,42 @@ namespace DfoServer.Network.Handlers.Dungeon
                 leaderRunIdentity,
                 leaderRoomIdentity.Value,
                 leaderPreviousRoomInstanceId);
+        }
+
+        private async Task<bool> TryChargeTowerMoveMapAsync(
+            EnhancedClientSession session,
+            DungeonRun run)
+        {
+            var tower = session?.Player?.DeathTowerState;
+            if (tower == null
+                || run?.Tower == null
+                || !ReferenceEquals(run.Tower, tower))
+            {
+                return true;
+            }
+
+            // Existing tower MOVE_MAP reject: not fighting yet, or already last stage.
+            // Do not charge a floor that will not be entered.
+            if (tower.State < 1 || tower.IsLastStage)
+                return true;
+
+            var nextStage = tower.CurrentStage + 1;
+            if (!_svc.TryChargeFatigueRoomVisit(
+                    session,
+                    run,
+                    mazeIndex: 0,
+                    cellX: nextStage,
+                    cellY: 0,
+                    "death_tower_move_map",
+                    out var result)
+                || result?.Allowed != true)
+            {
+                return false;
+            }
+
+            if (result.Cost > 0)
+                await _svc.NotifyFatigueAsync(session);
+            return true;
         }
 
         // 队长换图时把同队【在副本里】的成员也移到同一房间(服务端驱动, 队员副本=队长迷宫拷贝)。⚠️待真机验证。
@@ -296,6 +336,27 @@ namespace DfoServer.Network.Handlers.Dungeon
             var isBloodAltarMap = _svc.BloodAltars.IsBloodAltar(run);
 
             var roomKey = new RoomKey(maze.X, maze.Y, effectiveOverrideMapId);
+
+            // Charge before binding. Blood Altar / hell locked MOVE_MAP return
+            // before this method, so blocked moves are not charged. Unique key is
+            // maze+x+y (not RoomStates / OverrideMapId). Insufficient remaining
+            // fail closed: do not bind or send START_MAP; MOVE_MAP has no evidenced
+            // client-safe reject ACK.
+            if (!_svc.TryChargeFatigueRoomVisit(
+                    session,
+                    run,
+                    run.MazeIndex,
+                    maze.X,
+                    maze.Y,
+                    "start_map",
+                    out var fatigueResult)
+                || fatigueResult?.Allowed != true)
+            {
+                return null;
+            }
+
+            if (fatigueResult.Cost > 0)
+                await _svc.NotifyFatigueAsync(session);
 
             byte[] startMapBody;
             List<KeyValuePair<int, int>> hellPartyMonsterInfoAfterStartMap = null;

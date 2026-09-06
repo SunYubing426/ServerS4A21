@@ -26,6 +26,7 @@ namespace DfoServer.SelfTests
             VerifyDailyResetDoesNotRestoreSameDay(ref failures);
             VerifySelectCharacterAckWritesPersistedUsed(ref failures);
             VerifyEntryCostRules(ref failures);
+            VerifyRoomVisitRules(ref failures);
             VerifyV26ToCurrentMigration(ref failures);
 
             Console.WriteLine(
@@ -333,6 +334,299 @@ namespace DfoServer.SelfTests
                 CharacterFatigueService.ResolveEntryCost(new DungeonFile())
                     == CharacterFatigueService.DefaultEntryCost,
                 ref failures);
+            Check(
+                "default dungeon charges per visited room",
+                CharacterFatigueService.ResolveChargeMode(null)
+                    == CharacterFatigueChargeMode.PerVisitedRoom
+                    && CharacterFatigueService.ResolveChargeMode(new DungeonFile())
+                        == CharacterFatigueChargeMode.PerVisitedRoom,
+                ref failures);
+            Check(
+                "no-fatigue dungeons do not charge rooms or select",
+                CharacterFatigueService.ResolveChargeMode(
+                    new DungeonFile { NoFatigue = true })
+                    == CharacterFatigueChargeMode.None,
+                ref failures);
+            Check(
+                "enter-without-fatigue dungeons do not charge rooms or select",
+                CharacterFatigueService.ResolveChargeMode(
+                    new DungeonFile { EnterWithoutFatigue = true })
+                    == CharacterFatigueChargeMode.None,
+                ref failures);
+            Check(
+                "use-fatigue-only-start-dungeon charges at select only",
+                CharacterFatigueService.ChargesOnlyAtSelectDungeon(
+                    new DungeonFile { UseFatigueOnlyStartDungeon = true })
+                && CharacterFatigueService.ResolveChargeMode(
+                    new DungeonFile { UseFatigueOnlyStartDungeon = true })
+                    == CharacterFatigueChargeMode.OnlyStartDungeon,
+                ref failures);
+            Check(
+                "no-fatigue wins over only-start-dungeon",
+                CharacterFatigueService.ResolveChargeMode(
+                    new DungeonFile
+                    {
+                        NoFatigue = true,
+                        UseFatigueOnlyStartDungeon = true,
+                    }) == CharacterFatigueChargeMode.None,
+                ref failures);
+        }
+
+        private static void VerifyRoomVisitRules(ref int failures)
+        {
+            var databasePath = TempDbPath("room");
+            try
+            {
+                var database = new GameDatabase(
+                    databasePath,
+                    ServerPaths.SchemaFilePath);
+                SeedAccount(database, 501, 5001);
+                SeedCharacter(database, 501, 5002);
+                var service = new CharacterFatigueService(database);
+                var run = new DungeonRun(1, 0);
+                var solo = new[] { new CharacterFatigueTarget(5001, 0) };
+
+                Check(
+                    "first logical room visit consumes default fatigue",
+                    service.TryConsumeRoomVisit(
+                        run,
+                        solo,
+                        mazeIndex: 2,
+                        cellX: 1,
+                        cellY: 3,
+                        dungeon: new DungeonFile(),
+                        out var first)
+                    && first.Allowed
+                    && first.Cost == 1
+                    && first.Used == 1
+                    && service.Load(5001).Used == 1,
+                    ref failures);
+                Check(
+                    "revisit of the same maze+x+y does not consume",
+                    service.TryConsumeRoomVisit(
+                        run,
+                        solo,
+                        mazeIndex: 2,
+                        cellX: 1,
+                        cellY: 3,
+                        dungeon: new DungeonFile(),
+                        out var revisit)
+                    && revisit.Allowed
+                    && revisit.Reason == "revisit"
+                    && revisit.Cost == 0
+                    && service.Load(5001).Used == 1,
+                    ref failures);
+                Check(
+                    "a new cell consumes again",
+                    service.TryConsumeRoomVisit(
+                        run,
+                        solo,
+                        mazeIndex: 2,
+                        cellX: 2,
+                        cellY: 3,
+                        dungeon: new DungeonFile(),
+                        out var nextCell)
+                    && nextCell.Allowed
+                    && nextCell.Cost == 1
+                    && service.Load(5001).Used == 2,
+                    ref failures);
+                Check(
+                    "same x+y in another maze consumes",
+                    service.TryConsumeRoomVisit(
+                        run,
+                        solo,
+                        mazeIndex: 3,
+                        cellX: 1,
+                        cellY: 3,
+                        dungeon: new DungeonFile(),
+                        out var otherMaze)
+                    && otherMaze.Allowed
+                    && otherMaze.Cost == 1
+                    && service.Load(5001).Used == 3,
+                    ref failures);
+
+                var onlyStartRun = new DungeonRun(1, 0);
+                Check(
+                    "only-start-dungeon room visits do not consume",
+                    service.TryConsumeRoomVisit(
+                        onlyStartRun,
+                        solo,
+                        mazeIndex: 0,
+                        cellX: 0,
+                        cellY: 0,
+                        dungeon: new DungeonFile
+                        {
+                            UseFatigueOnlyStartDungeon = true,
+                        },
+                        out var onlyStart)
+                    && onlyStart.Allowed
+                    && onlyStart.Reason == "only_start_dungeon"
+                    && onlyStart.Cost == 0
+                    && service.Load(5001).Used == 3,
+                    ref failures);
+
+                var explicitRun = new DungeonRun(1, 0);
+                Check(
+                    "explicit DGN fatigue is charged per new cell",
+                    service.TryConsumeRoomVisit(
+                        explicitRun,
+                        solo,
+                        mazeIndex: 0,
+                        cellX: 4,
+                        cellY: 5,
+                        dungeon: new DungeonFile { Fatigue = 3 },
+                        out var explicitCost)
+                    && explicitCost.Allowed
+                    && explicitCost.Cost == 3
+                    && service.Load(5001).Used == 6,
+                    ref failures);
+
+                var zeroRun = new DungeonRun(1, 0);
+                Check(
+                    "no-fatigue room visits stay at zero cost",
+                    service.TryConsumeRoomVisit(
+                        zeroRun,
+                        solo,
+                        mazeIndex: 0,
+                        cellX: 1,
+                        cellY: 1,
+                        dungeon: new DungeonFile { NoFatigue = true },
+                        out var none)
+                    && none.Allowed
+                    && none.Cost == 0
+                    && service.Load(5001).Used == 6,
+                    ref failures);
+
+                var remaining = CharacterFatigueService.DefaultMaxFatigue - 6;
+                Check(
+                    "exhaust remaining fatigue before insufficient visit",
+                    service.TryConsume(5001, remaining, out var drained)
+                    && drained.Allowed
+                    && service.Load(5001).Used
+                        == CharacterFatigueService.DefaultMaxFatigue,
+                    ref failures);
+                var blockedRun = new DungeonRun(1, 0);
+                Check(
+                    "insufficient room visit is rejected and not marked",
+                    !service.TryConsumeRoomVisit(
+                        blockedRun,
+                        solo,
+                        mazeIndex: 0,
+                        cellX: 7,
+                        cellY: 8,
+                        dungeon: new DungeonFile(),
+                        out var blocked)
+                    && !blocked.Allowed
+                    && blocked.Reason == "insufficient_fatigue"
+                    && service.Load(5001).Used
+                        == CharacterFatigueService.DefaultMaxFatigue,
+                    ref failures);
+                Check(
+                    "unmarked failed cell can be attempted again",
+                    !service.TryConsumeRoomVisit(
+                        blockedRun,
+                        solo,
+                        mazeIndex: 0,
+                        cellX: 7,
+                        cellY: 8,
+                        dungeon: new DungeonFile(),
+                        out var blockedAgain)
+                    && blockedAgain.Reason == "insufficient_fatigue",
+                    ref failures);
+
+                SeedAccount(database, 511, 5101);
+                SeedCharacter(database, 511, 5102);
+                var partyService = new CharacterFatigueService(database);
+                Check(
+                    "exhaust second party member before room visit",
+                    partyService.TryConsume(
+                        5102,
+                        CharacterFatigueService.DefaultMaxFatigue,
+                        out var partyExhausted)
+                    && partyExhausted.Allowed,
+                    ref failures);
+                var partyRun = new DungeonRun(1, 0);
+                var partyTargets = new[]
+                {
+                    new CharacterFatigueTarget(5101, 0),
+                    new CharacterFatigueTarget(5102, 1),
+                };
+                Check(
+                    "party room visit rejects atomically when a member lacks fatigue",
+                    !partyService.TryConsumeRoomVisit(
+                        partyRun,
+                        partyTargets,
+                        mazeIndex: 0,
+                        cellX: 1,
+                        cellY: 1,
+                        dungeon: new DungeonFile(),
+                        out var partyRejected)
+                    && !partyRejected.Allowed
+                    && partyRejected.MemberSlot == 1
+                    && partyService.Load(5101).Used == 0
+                    && partyService.Load(5102).Used
+                        == CharacterFatigueService.DefaultMaxFatigue,
+                    ref failures);
+                Check(
+                    "failed party visit leaves the cell unmarked",
+                    !partyService.TryConsumeRoomVisit(
+                        partyRun,
+                        partyTargets,
+                        mazeIndex: 0,
+                        cellX: 1,
+                        cellY: 1,
+                        dungeon: new DungeonFile(),
+                        out var partyRetry)
+                    && partyRetry.Reason == "insufficient_fatigue"
+                    && partyService.Load(5101).Used == 0,
+                    ref failures);
+
+                var shared = new DungeonInstance(1, 0);
+                var leaderRun = new DungeonRun(
+                    shared,
+                    11,
+                    1,
+                    DungeonRunState.Active);
+                var memberRun = new DungeonRun(
+                    shared,
+                    12,
+                    1,
+                    DungeonRunState.Active);
+                SeedAccount(database, 521, 5201);
+                var sharedService = new CharacterFatigueService(database);
+                var sharedTargets = new[] { new CharacterFatigueTarget(5201, 0) };
+                Check(
+                    "leader first visit consumes for a shared dungeon instance",
+                    sharedService.TryConsumeRoomVisit(
+                        leaderRun,
+                        sharedTargets,
+                        mazeIndex: 1,
+                        cellX: 0,
+                        cellY: 0,
+                        dungeon: new DungeonFile(),
+                        out var leaderVisit)
+                    && leaderVisit.Cost == 1
+                    && sharedService.Load(5201).Used == 1,
+                    ref failures);
+                Check(
+                    "party follower START_MAP of the same cell does not double-charge",
+                    sharedService.TryConsumeRoomVisit(
+                        memberRun,
+                        sharedTargets,
+                        mazeIndex: 1,
+                        cellX: 0,
+                        cellY: 0,
+                        dungeon: new DungeonFile(),
+                        out var followerVisit)
+                    && followerVisit.Reason == "revisit"
+                    && followerVisit.Cost == 0
+                    && sharedService.Load(5201).Used == 1,
+                    ref failures);
+            }
+            finally
+            {
+                TryDelete(databasePath);
+            }
         }
 
         private static void VerifyV26ToCurrentMigration(ref int failures)

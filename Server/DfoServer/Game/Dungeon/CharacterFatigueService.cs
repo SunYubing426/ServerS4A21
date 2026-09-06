@@ -56,11 +56,13 @@ namespace DfoServer.Game.Dungeon
             int cost,
             int used,
             int max,
-            byte memberSlot = 0)
+            byte memberSlot = 0,
+            string reason = null)
             => new CharacterFatigueConsumeResult
             {
                 Allowed = true,
-                Reason = cost <= 0 ? "zero_cost" : "allowed",
+                Reason = reason
+                    ?? (cost <= 0 ? "zero_cost" : "allowed"),
                 MemberSlot = memberSlot,
                 Used = used,
                 Max = max,
@@ -82,6 +84,48 @@ namespace DfoServer.Game.Dungeon
                 Max = max,
                 Cost = cost,
             };
+    }
+
+    internal enum CharacterFatigueChargeMode
+    {
+        None = 0,
+        PerVisitedRoom = 1,
+        OnlyStartDungeon = 2,
+    }
+
+    internal readonly struct DungeonFatigueRoomCell : IEquatable<DungeonFatigueRoomCell>
+    {
+        internal DungeonFatigueRoomCell(int mazeIndex, int x, int y)
+        {
+            MazeIndex = mazeIndex;
+            X = x;
+            Y = y;
+        }
+
+        internal int MazeIndex { get; }
+
+        internal int X { get; }
+
+        internal int Y { get; }
+
+        public bool Equals(DungeonFatigueRoomCell other)
+            => MazeIndex == other.MazeIndex
+                && X == other.X
+                && Y == other.Y;
+
+        public override bool Equals(object obj)
+            => obj is DungeonFatigueRoomCell other && Equals(other);
+
+        public override int GetHashCode()
+        {
+            unchecked
+            {
+                int hash = MazeIndex * 397;
+                hash = (hash ^ X) * 397;
+                hash ^= Y;
+                return hash;
+            }
+        }
     }
 
     internal sealed class CharacterFatigueService
@@ -117,6 +161,88 @@ namespace DfoServer.Game.Dungeon
             if (dungeon.Fatigue >= 0)
                 return dungeon.Fatigue;
             return DefaultEntryCost;
+        }
+
+        internal static CharacterFatigueChargeMode ResolveChargeMode(
+            DungeonFile dungeon)
+        {
+            if (dungeon != null
+                && (dungeon.NoFatigue || dungeon.EnterWithoutFatigue))
+            {
+                return CharacterFatigueChargeMode.None;
+            }
+
+            if (dungeon != null && dungeon.UseFatigueOnlyStartDungeon)
+                return CharacterFatigueChargeMode.OnlyStartDungeon;
+
+            return CharacterFatigueChargeMode.PerVisitedRoom;
+        }
+
+        internal static bool ChargesOnlyAtSelectDungeon(DungeonFile dungeon)
+            => ResolveChargeMode(dungeon)
+                == CharacterFatigueChargeMode.OnlyStartDungeon;
+
+        internal static bool IsChargeableRoomCell(int cellX, int cellY)
+            => cellX >= 0
+                && cellY >= 0
+                && (cellX != 0xFF || cellY != 0xFF);
+
+        internal bool TryConsumeRoomVisit(
+            DungeonRun run,
+            IReadOnlyList<CharacterFatigueTarget> targets,
+            int mazeIndex,
+            int cellX,
+            int cellY,
+            DungeonFile dungeon,
+            out CharacterFatigueConsumeResult result)
+        {
+            result = CharacterFatigueConsumeResult.Reject(
+                "invalid_request",
+                memberSlot: 0);
+            if (run == null)
+                return false;
+
+            var mode = ResolveChargeMode(dungeon);
+            var cost = ResolveEntryCost(dungeon);
+            if (mode != CharacterFatigueChargeMode.PerVisitedRoom)
+            {
+                result = CharacterFatigueConsumeResult.Allow(
+                    0,
+                    0,
+                    DefaultMaxFatigue,
+                    reason: mode == CharacterFatigueChargeMode.OnlyStartDungeon
+                        ? "only_start_dungeon"
+                        : "zero_cost");
+                return true;
+            }
+
+            if (!IsChargeableRoomCell(cellX, cellY))
+            {
+                result = CharacterFatigueConsumeResult.Allow(
+                    0,
+                    0,
+                    DefaultMaxFatigue,
+                    reason: "unchargeable_cell");
+                return true;
+            }
+
+            if (!run.TryMarkFatigueRoomVisited(mazeIndex, cellX, cellY))
+            {
+                result = CharacterFatigueConsumeResult.Allow(
+                    0,
+                    0,
+                    DefaultMaxFatigue,
+                    reason: "revisit");
+                return true;
+            }
+
+            if (!TryConsumeMany(targets, cost, out result))
+            {
+                run.TryUnmarkFatigueRoomVisited(mazeIndex, cellX, cellY);
+                return false;
+            }
+
+            return true;
         }
 
         internal CharacterFatigueSnapshot Load(int characterId)
