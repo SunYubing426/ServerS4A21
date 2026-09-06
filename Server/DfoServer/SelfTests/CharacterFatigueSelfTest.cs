@@ -277,14 +277,13 @@ namespace DfoServer.SelfTests
                     InitializationSnapshot = new SelectCharacterInitializationSnapshot(),
                 };
                 Check(
-                    "select-character ACK writes remaining, max, and used fatigue",
+                    "select-character ACK writes used, max, and used fatigue",
                     SelectCharacterAckBodyBuilder.TryBuild(
                         snapshot,
                         database.ConnectionString,
                         out var body)
                     && body != null
-                    && BitConverter.ToInt16(body, 11)
-                        == CharacterFatigueService.DefaultMaxFatigue - 33
+                    && BitConverter.ToInt16(body, 11) == 33
                     && BitConverter.ToInt16(body, 13)
                         == CharacterFatigueService.DefaultMaxFatigue
                     && BitConverter.ToInt16(body, 15) == 33,
@@ -295,8 +294,7 @@ namespace DfoServer.SelfTests
                     "NOTI FATIGUE body matches ACK fatigue triple",
                     notification != null
                     && notification.Length == 6
-                    && BitConverter.ToInt16(notification, 0)
-                        == CharacterFatigueService.DefaultMaxFatigue - 33
+                    && BitConverter.ToInt16(notification, 0) == 33
                     && BitConverter.ToInt16(notification, 2)
                         == CharacterFatigueService.DefaultMaxFatigue
                     && BitConverter.ToInt16(notification, 4) == 33,

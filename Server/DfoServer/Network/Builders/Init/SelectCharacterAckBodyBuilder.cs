@@ -76,7 +76,8 @@ namespace DfoServer.Network.Builders
                 $"[SelectCharacterAck] fatigue cid={record.CharacterId} " +
                 $"remaining={fatigue.Remaining} used={fatigue.Used} " +
                 $"max={fatigue.Max}");
-            // [11] i16 Fatigue remaining, [13] FatigueMax, [15] usedFatigueMax
+            // [11] i16 Fatigue used (HUD remaining = max - this),
+            // [13] FatigueMax, [15] usedFatigueMax (same used)
             CharacterFatiguePacketBuilder.WriteSnapshot(writer, fatigue);
 
             // [17] u8 premiumCount + N × (u8 type + u8[8] endTime)
