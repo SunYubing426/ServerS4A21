@@ -151,6 +151,9 @@ namespace DfoServer.Game.Dungeon
 
     internal sealed class DungeonRunCombatState
     {
+        internal SemaphoreSlim FatigueRoomGate { get; } = new SemaphoreSlim(1, 1);
+        internal HashSet<RoomKey> FatigueAccountedRooms { get; } =
+            new HashSet<RoomKey>();
         internal ushort MonsterCount { get; set; }
         internal ushort RoomStartSequence { get; set; }
         internal IReadOnlyList<GameWorld.Dungeon.MonsterSumInfo> RoomMonsters { get; set; }
@@ -229,6 +232,7 @@ namespace DfoServer.Game.Dungeon
         internal DeathTower.DeathTowerSettlementRuntime DeathTower { get; set; }
         internal SecretShop.SecretShopOffer SecretShopOffer { get; set; }
         internal List<ClearRewardGenerator.CardReward> CardRewards { get; set; }
+        internal BlackDiamondCardReward BlackDiamondCardReward { get; set; }
         internal int PaidCardCost { get; set; }
         internal bool PaidCardUsesDevilContract { get; set; }
         internal int CardFlipCount { get; set; }

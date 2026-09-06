@@ -15,6 +15,26 @@ namespace DfoServer.Game.Premium
     {
         public const ushort DefaultServiceType = 1;
 
+        // A21 163CF52: type 56 -> string 0x1155B (黑钻会员).
+        // 登录契约图 14D606D / 14D3F60 也以 56 查询帧 20/19。
+        // type 1 是狂热与勇士，17..22 是霸王契约，不得再作为黑钻兼容值。
+        public const int BlackDiamondPremiumType = 56;
+        private static readonly int[] BlackDiamondPremiumTypes = { BlackDiamondPremiumType };
+
+        internal static bool HasActiveBlackDiamond(string connectionString, int accountId)
+            => HasActivePremium(connectionString, accountId, BlackDiamondPremiumTypes);
+
+        internal static bool HasActiveBlackDiamond(SqliteConnection connection, int accountId)
+            => HasActivePremium(connection, accountId, BlackDiamondPremiumTypes);
+
+        internal static bool HasActiveBlackDiamond(SqliteConnection connection, SqliteTransaction transaction, int accountId)
+            => HasActivePremium(connection, accountId, BlackDiamondPremiumTypes, transaction);
+
+        internal static bool HasActiveBlackDiamond(
+            SqliteConnection connection, SqliteTransaction transaction, int accountId, DateTime utcNow)
+            => HasActivePremium(connection, accountId, BlackDiamondPremiumTypes, transaction,
+                new DateTimeOffset(utcNow).ToUnixTimeSeconds());
+
         private const int PremiumServiceEntryExpireBase = 6;
         private const int PremiumServiceEntryUsedCountBase = 10;
         private const int PremiumServiceEntryStride = 9;
@@ -130,7 +150,7 @@ namespace DfoServer.Game.Premium
             return writer.ToArray();
         }
 
-        private static byte[] BuildCeraSpecialItemNotification(int premiumType, long remaining)
+        internal static byte[] BuildCeraSpecialItemNotification(int premiumType, long remaining)
         {
             var writer = new GamePacketWriter();
             writer.WriteUInt16(2);
@@ -419,32 +439,56 @@ LIMIT 1;";
             if (accountId <= 0 || premiumTypes == null || premiumTypes.Length == 0)
                 return false;
 
-            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             using (var conn = new SqliteConnection(connStr))
             {
                 conn.Open();
-                using (var cmd = conn.CreateCommand())
-                {
-                    var typeParams = new string[premiumTypes.Length];
-                    for (var i = 0; i < premiumTypes.Length; i++)
-                    {
-                        var name = "@type" + i;
-                        typeParams[i] = name;
-                        cmd.Parameters.AddWithValue(name, premiumTypes[i]);
-                    }
+                return HasActivePremium(conn, accountId, premiumTypes);
+            }
+        }
 
-                    cmd.CommandText = $@"
+        private static bool HasActivePremium(SqliteConnection conn, int accountId, int[] premiumTypes,
+            SqliteTransaction transaction = null, long? nowUnix = null)
+        {
+            if (accountId <= 0)
+                return false;
+
+            var now = nowUnix ?? DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.Transaction = transaction;
+                var typeParams = new string[premiumTypes.Length];
+                for (var i = 0; i < premiumTypes.Length; i++)
+                {
+                    var name = "@type" + i;
+                    typeParams[i] = name;
+                    cmd.Parameters.AddWithValue(name, premiumTypes[i]);
+                }
+
+                cmd.CommandText = $@"
 SELECT 1
 FROM account_premiums
 WHERE account_id=@aid
   AND end_time>@now
   AND premium_type IN ({string.Join(",", typeParams)})
 LIMIT 1;";
-                    cmd.Parameters.AddWithValue("@aid", accountId);
-                    cmd.Parameters.AddWithValue("@now", now);
-                    return cmd.ExecuteScalar() != null;
-                }
+                cmd.Parameters.AddWithValue("@aid", accountId);
+                cmd.Parameters.AddWithValue("@now", now);
+                return cmd.ExecuteScalar() != null;
             }
+        }
+
+        internal static bool TryActivateContractInTransaction(
+            SqliteConnection connection, SqliteTransaction transaction, int accountId,
+            int itemId, int count, out int premiumType, out long remaining)
+        {
+            premiumType = 0;
+            remaining = 0;
+            if (connection == null || transaction == null || accountId <= 0 || count <= 0
+                || !TryResolveContractItem(itemId, out premiumType, out var days)) return false;
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var duration = checked((long)days * 86400 * count);
+            remaining = UpsertPremiumExpire(connection, transaction, accountId, premiumType, now, duration) - now;
+            return true;
         }
 
         private static long UpsertPremiumExpire(string connStr, int accountId, int premiumType, long now, long duration)

@@ -30,6 +30,8 @@ namespace DfoServer.Game.SelectCharacter
         public uint EquippedCreatureItemId { get; set; }
         public byte[] EquippedCreatureNameBytes { get; set; } = new byte[0];
         public byte EquippedCreatureAliveState { get; set; }
+        // Read-only account qualification; not persisted as character permission.
+        public bool BlackDiamondEligible { get; set; }
         public uint PcRoomId { get; set; } = 0x00010001;     
         public byte IsPrivateStore { get; set; }             
         public byte IsPremiumPcRoom { get; set; }            

@@ -49,10 +49,24 @@ namespace DfoServer.Sqlite
                 new MigrationStep(24, "add_license_dungeon_period_state", ApplyLicenseDungeonPeriodState),
                 new MigrationStep(25, "add_license_dungeon_progress", ApplyLicenseDungeonProgress),
                 new MigrationStep(26, "add_license_dungeon_unlock_conditions", ApplyLicenseDungeonUnlockConditions),
+                // test 的虚弱恢复使用 subtype0 私有绝对截止时间。该列曾存在于
+                // test 的 v18/v19 分叉迁移；统一在主线 v26 之后幂等补齐，使来自
+                // master 或旧 test 的数据库都能升级到同一结构。
+                new MigrationStep(27, "add_stamina_recovery_deadline", ApplyAddStaminaRecoveryDeadline),
             };
 
         internal static int CurrentVersion =>
             Steps.Count == 0 ? BaselineVersion : Steps[Steps.Count - 1].Version;
+
+        private static void ApplyAddStaminaRecoveryDeadline(
+            SqliteConnection connection,
+            SqliteTransaction transaction)
+            => AddColumnIfMissing(
+                connection,
+                transaction,
+                "character_subtype0_fields",
+                "stamina_recover_end_unix",
+                "INTEGER NOT NULL DEFAULT 0");
 
         internal static void MarkCurrent(
             SqliteConnection connection,

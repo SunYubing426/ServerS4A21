@@ -99,6 +99,7 @@ namespace DfoServer.Game.Mailbox
     public sealed class MailboxSendResult
     {
         public bool Success { get; set; }
+        public bool IdempotencyReplay { get; set; }
         public MailboxSendError Error { get; set; }
         public long MessageId { get; set; }
         public int FeeGold { get; set; }

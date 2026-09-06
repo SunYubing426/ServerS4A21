@@ -2,6 +2,7 @@ using DfoServer.Game.Accounts;
 using DfoServer.Game.Appearance;
 using DfoServer.Game.Characters;
 using DfoServer.Game.ItemUpgrade;
+using DfoServer.Game.Premium;
 using DfoServer.Game.SelectCharacter;
 using DfoServer.Infrastructure;
 using System;
@@ -104,7 +105,10 @@ namespace DfoServer.Network.Builders
                 database);
             UserInfoType2RosterTailBuilder.WriteA21(
                 writer,
-                cloneTitleItemId > 0 ? (uint)cloneTitleItemId : 0);
+                cloneTitleItemId > 0 ? (uint)cloneTitleItemId : 0,
+                blackDiamondEligible: database != null
+                    ? PremiumService.HasActiveBlackDiamond(database.ConnectionString, character.AccountId)
+                    : character.Subtype0Tail?.BlackDiamondEligible == true);
         }
 
         private static CharacterAppearanceEntry[] ResolveA21RosterAppearances(

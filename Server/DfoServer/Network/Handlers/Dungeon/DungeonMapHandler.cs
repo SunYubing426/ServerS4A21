@@ -1,6 +1,7 @@
 using DfoServer.Game.Dungeon;
 using DfoServer.Infrastructure;
 using DfoServer.Network.Builders;
+using DfoServer.Network.Handlers;
 using DfoServer.Network.Parsers.Dungeon;
 using PvfLib;
 using System;
@@ -251,6 +252,9 @@ namespace DfoServer.Network.Handlers.Dungeon
                 return null;
             }
             var runIdentity = run.CaptureIdentity();
+            var fatiguePlayer = session.Player;
+            var fatigueCharacterId = fatiguePlayer.CharacterId;
+            var fatigueAccountId = session.Account?.AccountId ?? 0;
 
             var effectiveOverrideMapId =
                 DungeonMechanismCoordinator.ResolveStartMapOverride(
@@ -300,6 +304,9 @@ namespace DfoServer.Network.Handlers.Dungeon
             byte[] startMapBody;
             List<KeyValuePair<int, int>> hellPartyMonsterInfoAfterStartMap = null;
             var isFirstRunStartMap = false;
+            var accountsFatigueForRoom = run.Tower == null
+                && !isBloodAltarMap
+                && !isTournamentMap;
             var sentMapId = maze.Index;
             var sentMapX = maze.X;
             var sentMapY = maze.Y;
@@ -547,6 +554,87 @@ namespace DfoServer.Network.Handlers.Dungeon
                     hellPartyFogFlag: pendingHellPartyFogFlag,
                     extraEntries: passiveObjectDrops.Entries,
                     ridableEntries: pendingRidableEntries);
+            }
+
+            if (accountsFatigueForRoom)
+            {
+                var fatigueRoomIdentity = run.CaptureParticipantRoomIdentity();
+                bool IsFatigueOwnerCurrent() =>
+                    ReferenceEquals(session.Player, fatiguePlayer)
+                    && fatiguePlayer.CharacterId == fatigueCharacterId
+                    && session.Account?.AccountId == fatigueAccountId
+                    && fatiguePlayer.IsCurrentDungeonParticipantRoom(fatigueRoomIdentity)
+                    && run.RoomKey.Equals(roomKey)
+                    && run.RunState != DungeonRunState.Ending
+                    && run.RunState != DungeonRunState.Ended
+                    && run.Instance.State != DungeonInstanceState.Ending
+                    && run.Instance.State != DungeonInstanceState.Ended;
+
+                await run.Combat.FatigueRoomGate.WaitAsync();
+                try
+                {
+                    bool alreadyAccounted;
+                    DungeonFatigueConsumeResult fatigueResult = default;
+                    // Match lifecycle lock ordering and revalidate after the await.
+                    // Never charge a character read from a subsequently replaced session.
+                    lock (fatiguePlayer.DungeonRunLifecycleSyncRoot)
+                    lock (run.SyncRoot)
+                    {
+                        if (!IsFatigueOwnerCurrent())
+                            return null;
+                        alreadyAccounted = run.Combat.FatigueAccountedRooms.Contains(roomKey);
+                        if (!alreadyAccounted)
+                        {
+                            fatigueResult = _svc.Fatigue.ConsumeRoom(
+                                fatigueCharacterId,
+                                fatigueAccountId);
+                            if (!fatigueResult.Failed)
+                                run.Combat.FatigueAccountedRooms.Add(roomKey);
+                        }
+                    }
+                    if (!alreadyAccounted)
+                    {
+                        if (fatigueResult.Failed)
+                        {
+                            FileLogger.Log(
+                                $"[DungeonHandler] FATIGUE write failed: " +
+                                $"cid={session.Player.CharacterId} dungeon={run.DungeonId} " +
+                                $"room=({roomKey.X},{roomKey.Y},{roomKey.OverrideMapId})");
+                            return null;
+                        }
+
+                        if (!IsFatigueOwnerCurrent())
+                            return null;
+                        await session.SendPacketAsync(
+                            GamePacketEnvelopeBuilder.Build(
+                                0x00,
+                                (ushort)NotiPacketTypeA21.FATIGUE,
+                                DungeonFatigueStateBodyBuilder.Build(fatigueResult.State)));
+                        if (!IsFatigueOwnerCurrent())
+                            return null;
+                        if (fatigueResult.MailDelivered)
+                        {
+                            await session.SendPacketAsync(
+                                GamePacketEnvelopeBuilder.Build(
+                                    0x00,
+                                    (ushort)NotiPacketTypeA21.MAILBOX_ALARM,
+                                    MailboxHandler.BuildMailboxAlarmNotification(1)));
+                        }
+                        FileLogger.Log(
+                            $"[DungeonHandler] FATIGUE room: " +
+                            $"cid={session.Player.CharacterId} dungeon={run.DungeonId} " +
+                            $"room=({roomKey.X},{roomKey.Y},{roomKey.OverrideMapId}) " +
+                            $"consumed={(fatigueResult.Consumed ? 1 : 0)} " +
+                            $"mail={(fatigueResult.MailDelivered ? 1 : 0)} " +
+                            $"used={fatigueResult.State.Used} limit={fatigueResult.State.Limit}");
+                    }
+                    if (!IsFatigueOwnerCurrent())
+                        return null;
+                }
+                finally
+                {
+                    run.Combat.FatigueRoomGate.Release();
+                }
             }
 
             CacheResolvedStartMapId(run, sentMapX, sentMapY, sentMapId);

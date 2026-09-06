@@ -345,6 +345,11 @@ namespace DfoServer.Game.SelectCharacter
             initSnapshot.ShopCoinEventFlag = _dailyResetService.IsClaimed(characterId, ReviveCoin.ReviveCoinService.DailyClaimKey) ? (byte)1 : (byte)0;
 
             LoadAccountPremiums(accountId, initSnapshot);
+            var fatigueLimit = DungeonFatigueService.ResolveLimit(initSnapshot.AckPremiums);
+            var fatigue = new DungeonFatigueService(_database)
+                .GetSnapshot(characterId, fatigueLimit);
+            initSnapshot.AckFatigueUsed = fatigue.Used;
+            initSnapshot.AckFatigueLimit = fatigue.Limit;
             initSnapshot.PremiumServiceType = Premium.PremiumService.DefaultServiceType;
             initSnapshot.PremiumServiceData = Premium.PremiumService.BuildPremiumServiceData(
                 _connectionString,

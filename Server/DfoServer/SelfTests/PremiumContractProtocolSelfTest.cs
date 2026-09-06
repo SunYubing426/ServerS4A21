@@ -79,6 +79,7 @@ namespace DfoServer.SelfTests
                 && initBody[3 + 6] == 0x78,
                 ref failures);
 
+            failures += BlackDiamondUserInfoSelfTest.RunChecks();
             failures += RunDailyUsageChecks();
             failures += RunQuestAssistantChecks();
             failures += RunQuestAssistantGiftChecks();
