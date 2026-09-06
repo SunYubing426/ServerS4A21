@@ -1549,6 +1549,26 @@ namespace DfoServer.Network.Handlers.Dungeon
                 return;
             }
             ConfigureLinkedDungeonRunState(req.DungeonId, run);
+            if (ConsumesFatigue(run)
+                && !TryValidatePartyFatigue(
+                    session,
+                    out var fatigueState,
+                    out var exhaustedMemberSlot,
+                    out var exhaustedCharacterId))
+            {
+                FileLogger.Log(
+                    $"[{DungeonSharedServices.ProtocolLogName}] " +
+                    $"SELECT_DUNGEON fatigue rejected: " +
+                    $"cid={exhaustedCharacterId} dungeon={req.DungeonId} " +
+                    $"used={fatigueState.Used} limit={fatigueState.Limit}");
+                await RejectEntryAdmissionAsync(
+                    session,
+                    header.type,
+                    run,
+                    DungeonAdmissionReject.InsufficientFatigue(
+                        exhaustedMemberSlot));
+                return;
+            }
             EntryCostResult entryValidation = null;
             if (!TryGetOwnedInventoryLease(session, out var entryLease)
                 || !_svc.EntryAdmission.TryPrepareRun(
@@ -2664,6 +2684,60 @@ namespace DfoServer.Network.Handlers.Dungeon
                     wireType,
                     rejection);
             }
+        }
+
+        private bool ConsumesFatigue(DungeonRun run)
+            => run != null
+                && run.Tower == null
+                && !_svc.Tournaments.IsTournamentRun(run)
+                && !_svc.BloodAltars.IsBloodAltar(run);
+
+        private bool TryValidatePartyFatigue(
+            EnhancedClientSession leader,
+            out DungeonFatigueSnapshot state,
+            out byte memberSlot,
+            out int exhaustedCharacterId)
+        {
+            exhaustedCharacterId = leader?.Player?.CharacterId ?? 0;
+            memberSlot = ResolvePartySlot(leader);
+            if (!_svc.Fatigue.CanEnter(
+                    exhaustedCharacterId,
+                    leader?.Account?.AccountId ?? 0,
+                    out state))
+            {
+                return false;
+            }
+
+            var party = _svc.PartyManager?.GetPartyByUser(
+                (ushort)exhaustedCharacterId);
+            if (party == null || party.Count <= 1 || _svc.Sessions == null)
+                return true;
+
+            foreach (var member in party.MembersBySlot())
+            {
+                if (member.CharacterId == exhaustedCharacterId
+                    || !_svc.Sessions.TryGet(member.CharacterId, out var memberSession)
+                    || memberSession?.Player == null
+                    || memberSession.TcpClient == null
+                    || !memberSession.TcpClient.Connected)
+                {
+                    continue;
+                }
+
+                if (_svc.Fatigue.CanEnter(
+                        member.CharacterId,
+                        memberSession.Account?.AccountId ?? (int)member.AccId,
+                        out state))
+                {
+                    continue;
+                }
+
+                exhaustedCharacterId = member.CharacterId;
+                memberSlot = member.SlotIndex;
+                return false;
+            }
+
+            return true;
         }
 
         private void RollbackLicensedDungeonEntry(

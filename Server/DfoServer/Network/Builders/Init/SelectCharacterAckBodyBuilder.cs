@@ -50,12 +50,15 @@ namespace DfoServer.Network.Builders
             // [9] u16 uniqueId
             writer.WriteInt16(record != null ? (short)record.CharacterId : (short)initSnap.AckUniqueId);
 
-            // [11] i16 totalFatigue
-            writer.WriteInt16(0);
+            // [11] i16 usedFatigue
+            // Client CMD_SELECT_CHARACTER ACK handling forwards this field to
+            // the same fatigue-used setter as the first u16 in NOTI 0x0024.
+            writer.WriteInt16((short)initSnap.AckFatigueUsed);
 
-            writer.WriteInt16(188);
+            // [13] i16 fatigueLimit
+            writer.WriteInt16((short)initSnap.AckFatigueLimit);
 
-            // [15] i16 usedFatigue
+            // [15] i16 auxiliary fatigue field (normally zero)
             writer.WriteInt16(0);
 
             // [17] u8 premiumCount + N × (u8 type + u8[8] endTime)

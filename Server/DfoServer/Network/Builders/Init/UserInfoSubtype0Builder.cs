@@ -99,6 +99,8 @@ namespace DfoServer.Network.Builders
         // （HardcoreDeathCount(u16)@37-38 之后依次 ProgressA(u32)、ProgressB(u32)、
         // UserStateBits@47）推算，blob[52]=0x64 与旧 WriteByte(100) 对齐作为锚点。
         internal const int A21AfterAliveLength = 64;
+        // A21 13E2DB0 reads this qualification; vending requires exactly 1.
+        internal const int A21AfterAliveBlackDiamondOffset = 1;
         internal const int A21AfterAliveExpertJobTypeOffset = 23;
         internal const int A21AfterAliveExpertJobExpOffset = 24;
         internal const int A21AfterAliveProgressAOffset = 39;
@@ -117,12 +119,13 @@ namespace DfoServer.Network.Builders
             0x00, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x00, 0x00,
         };
 
-        private static byte[] BuildA21AfterAliveNoGuild(UserInfoMinimumTailSnapshot tail)
+        internal static byte[] BuildA21AfterAliveNoGuild(UserInfoMinimumTailSnapshot tail)
         {
             var body = (byte[])A21AfterAliveNoGuild.Clone();
             if (tail == null)
                 return body;
 
+            body[A21AfterAliveBlackDiamondOffset] = tail.BlackDiamondEligible ? (byte)1 : (byte)0;
             body[A21AfterAliveExpertJobTypeOffset] = tail.ExpertJobType;
             var experience = BitConverter.GetBytes(ProjectA21ExpertJobExp(tail));
             Buffer.BlockCopy(

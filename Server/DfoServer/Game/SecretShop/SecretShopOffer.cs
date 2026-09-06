@@ -103,18 +103,32 @@ namespace DfoServer.Game.SecretShop
 
     internal static class SecretShopOfferFactory
     {
+        internal static SecretShopMemberPolicy ResolveMemberPolicy(
+            string connectionString,
+            int accountId)
+        {
+            return SecretShopMemberPolicy.FromBlackDiamond(
+                DfoServer.Game.Premium.PremiumService.HasActiveBlackDiamond(
+                    connectionString,
+                    accountId));
+        }
+
         internal static SecretShopOffer Create(
             SecretShopCatalog catalog,
             int dungeonId,
             int dungeonBasisLevel,
             int partySize,
-            Func<int, int> next)
+            Func<int, int> next,
+            SecretShopMemberPolicy policy = default)
         {
             if (catalog == null)
                 throw new ArgumentNullException(nameof(catalog));
 
-            var npcId = SecretShopSelector.SelectNpc(
-                catalog.ResolveNpcWeights(dungeonId, dungeonBasisLevel, partySize), next);
+            var clampedPartySize = Math.Clamp(partySize, 1, 4);
+            var weights = catalog.ResolveNpcWeights(dungeonId, dungeonBasisLevel, clampedPartySize);
+            var npcId = SecretShopSelector.SelectNpc(weights, next);
+            if (npcId == 1000 && policy.ExtraEncounterRoll)
+                npcId = SecretShopSelector.SelectNpc(weights, next);
             if (npcId == 1000)
                 return new SecretShopOffer(1000, Array.Empty<SecretShopItemCandidate>());
 
@@ -122,7 +136,7 @@ namespace DfoServer.Game.SecretShop
                 return new SecretShopOffer(1000, Array.Empty<SecretShopItemCandidate>());
 
             var pool = catalog.ResolvePool(npcId, dungeonId, dungeonBasisLevel, useCashItems: false);
-            var selected = SecretShopSelector.SelectItems(pool, next);
+            var selected = SecretShopSelector.SelectItems(pool, next, policy);
             if (selected.Count == 0)
                 return new SecretShopOffer(1000, Array.Empty<SecretShopItemCandidate>());
 

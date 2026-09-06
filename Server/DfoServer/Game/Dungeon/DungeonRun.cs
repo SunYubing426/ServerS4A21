@@ -332,7 +332,21 @@ namespace DfoServer.Game.Dungeon
         }
 
         internal SecretShop.SecretShopOffer SecretShopOffer { get => Settlement.SecretShopOffer; set => Settlement.SecretShopOffer = value; }
-        public List<ClearRewardGenerator.CardReward> CardRewards { get => Settlement.CardRewards; set => Settlement.CardRewards = value; }
+        public List<ClearRewardGenerator.CardReward> CardRewards
+        {
+            get => Settlement.CardRewards;
+            set
+            {
+                Settlement.CardRewards = value;
+                if (value == null)
+                    Settlement.BlackDiamondCardReward = default;
+            }
+        }
+        internal BlackDiamondCardReward BlackDiamondCardReward
+        {
+            get => Settlement.BlackDiamondCardReward;
+            set => Settlement.BlackDiamondCardReward = value;
+        }
         public int PaidCardCost { get => Settlement.PaidCardCost; set => Settlement.PaidCardCost = Math.Max(0, value); }
         public bool PaidCardUsesDevilContract { get => Settlement.PaidCardUsesDevilContract; set => Settlement.PaidCardUsesDevilContract = value; }
         public int CardFlipCount { get => Settlement.CardFlipCount; set => Settlement.CardFlipCount = value; }
@@ -370,6 +384,26 @@ namespace DfoServer.Game.Dungeon
             new DungeonParticipantRoomIdentity(
                 CaptureIdentity(),
                 CaptureRoomIdentity());
+
+        internal BlackDiamondCardReward FreezeBlackDiamondCardReward(
+            bool eligible,
+            Func<int, int> nextExclusive,
+            ClearRewardGenerationContext context,
+            DnfLcg lcg)
+        {
+            lock (SyncRoot)
+            {
+                if (Settlement.BlackDiamondCardReward.Frozen)
+                    return Settlement.BlackDiamondCardReward;
+                var frozen = BlackDiamondCardRules.Roll(
+                    eligible,
+                    nextExclusive,
+                    context,
+                    lcg);
+                Settlement.BlackDiamondCardReward = frozen;
+                return frozen;
+            }
+        }
 
         public Guid GetSettlementSourceEventId()
         {

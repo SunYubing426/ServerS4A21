@@ -1408,10 +1408,41 @@ namespace DfoServer.Network.Handlers
 
         private static void WriteMailboxString(GamePacketWriter writer, string value, int maxBytes)
         {
-            // 邮件字符串用 GBK；长度按缓冲区预留结尾 0。
-            var bytes = ClientTextEncoding.Truncate(value ?? string.Empty, Math.Max(0, maxBytes - 1));
+            // A21 邮件列表/详情界面按 UTF-8 解码服务端下发的 dstr。
+            // 玩家发信请求仍沿用客户端上行 GBK 解析；这里只处理下行文本。
+            var bytes = TruncateMailboxUtf8(
+                value ?? string.Empty,
+                Math.Max(0, maxBytes - 1));
             writer.WriteInt32(bytes.Length);
             writer.WriteBytes(bytes);
+        }
+
+        private static byte[] TruncateMailboxUtf8(string value, int maxBytes)
+        {
+            if (string.IsNullOrEmpty(value) || maxBytes <= 0)
+                return Array.Empty<byte>();
+
+            var bytes = Encoding.UTF8.GetBytes(value);
+            if (bytes.Length <= maxBytes)
+                return bytes;
+
+            var characterCount = value.Length;
+            while (characterCount > 0
+                   && Encoding.UTF8.GetByteCount(value, 0, characterCount) > maxBytes)
+            {
+                characterCount--;
+            }
+
+            // 不把 UTF-16 代理项拆成半个字符。
+            if (characterCount > 0
+                && char.IsHighSurrogate(value[characterCount - 1]))
+            {
+                characterCount--;
+            }
+
+            return characterCount <= 0
+                ? Array.Empty<byte>()
+                : Encoding.UTF8.GetBytes(value.Substring(0, characterCount));
         }
 
         private static string ReadMailboxName(byte[] body)

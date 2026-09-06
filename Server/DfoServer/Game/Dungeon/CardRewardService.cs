@@ -79,6 +79,7 @@ namespace DfoServer.Game.Dungeon
                     run,
                     side,
                     out var cards,
+                    out var extra,
                     out var reservation))
             {
                 return CardRewardDeliveryResult.NotCommitted;
@@ -98,6 +99,7 @@ namespace DfoServer.Game.Dungeon
                         side == CardRewardSide.Paid
                             && run.PaidCardUsesDevilContract,
                         cards,
+                        extra,
                         out durableResult,
                         out var error))
                 {

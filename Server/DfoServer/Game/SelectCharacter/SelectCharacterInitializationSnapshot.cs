@@ -115,6 +115,8 @@ namespace DfoServer.Game.SelectCharacter
         
         public int AckCharCreatedTime { get; set; }
         public ushort AckUniqueId { get; set; }
+        public ushort AckFatigueUsed { get; set; }
+        public ushort AckFatigueLimit { get; set; } = Dungeon.DungeonFatigueService.StandardLimit;
         public List<AckPremiumEntrySnapshot> AckPremiums { get; } = new List<AckPremiumEntrySnapshot>();
         public int AckCera { get; set; }
         public int AckTokenCera { get; set; }

@@ -29,7 +29,8 @@ namespace DfoServer.Infrastructure
             EventJoustHandler eventJoust,
             EventPcRoomTimePointHandler eventPcRoomTimePoint,
             EventDailyAttendanceAnytimeHandler eventDailyAttendanceAnytime,
-            EventTotalAttendanceHandler eventTotalAttendance)
+            EventTotalAttendanceHandler eventTotalAttendance,
+            VendingMachineHandler vendingMachine)
         {
             LotteryItem = lotteryItem
                 ?? throw new ArgumentNullException(nameof(lotteryItem));
@@ -68,6 +69,7 @@ namespace DfoServer.Infrastructure
                     nameof(eventDailyAttendanceAnytime));
             EventTotalAttendance = eventTotalAttendance
                 ?? throw new ArgumentNullException(nameof(eventTotalAttendance));
+            VendingMachine = vendingMachine ?? throw new ArgumentNullException(nameof(vendingMachine));
         }
 
         internal LotteryItemHandler LotteryItem { get; }
@@ -112,5 +114,6 @@ namespace DfoServer.Infrastructure
             EventDailyAttendanceAnytime { get; }
 
         internal EventTotalAttendanceHandler EventTotalAttendance { get; }
+        internal VendingMachineHandler VendingMachine { get; }
     }
 }

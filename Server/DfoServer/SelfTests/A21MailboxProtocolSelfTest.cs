@@ -14,14 +14,14 @@ namespace DfoServer.SelfTests
     // A21 0x0061：空列表 6B 全 0；有邮件发完整列表。
     // summary 尾部两段长度前缀 blob + extra1；时装再写两段空长度后写 remain/key/extra2。
     // 宠物 type=25 在 expire 前写 i32+u8。detail 在 letterStat 后多 1 字节。
-    // 本客户端邮件 dstr 为 GBK(936)。
+    // 本客户端邮件下行 dstr 为 UTF-8；玩家发信上行仍为 GBK(936)。
     public static class A21MailboxProtocolSelfTest
     {
         public static int Run()
         {
             Console.WriteLine("=== A21_MAILBOX_PROTOCOL selftest ===");
             var failures = 0;
-            var encoding = ClientTextEncoding.Encoding;
+            var encoding = Encoding.UTF8;
 
             Check(
                 "MAILBOX_MAIL_LIST opcode comes from PacketTypesA21",
@@ -93,10 +93,10 @@ namespace DfoServer.SelfTests
             var utf8Text = Encoding.UTF8.GetBytes(challengeText);
             var gbkText = ClientTextEncoding.GetBytes(challengeText);
             Check(
-                "mailbox letter text is GBK",
-                gbkText.Length == 14
-                && ContainsBytes(stackableBody, gbkText)
-                && !ContainsBytes(stackableBody, utf8Text),
+                "mailbox letter text is UTF-8",
+                utf8Text.Length == 20
+                && ContainsBytes(stackableBody, utf8Text)
+                && !ContainsBytes(stackableBody, gbkText),
                 ref failures);
 
             var avatar = new MailboxListEntry

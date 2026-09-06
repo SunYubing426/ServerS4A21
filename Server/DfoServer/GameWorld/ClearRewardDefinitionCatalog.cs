@@ -50,6 +50,7 @@ namespace DfoServer.GameWorld
         private readonly Dictionary<int, int> _paidCardCosts;
         private readonly Dictionary<int, ClearRewardGradeRange> _gradeRanges;
         private readonly int[] _rarityControl;
+        private readonly IReadOnlyList<ClearRewardBlankItem> _pcRoomCardBlankItems;
 
         internal ClearRewardDefinition(
             Dictionary<string, ClearRewardDropLevel[]> dropProfiles,
@@ -62,7 +63,8 @@ namespace DfoServer.GameWorld
             Dictionary<int, int> paidCardCosts,
             double paidCardCreateRate,
             Dictionary<int, ClearRewardGradeRange> gradeRanges,
-            int[] rarityControl)
+            int[] rarityControl,
+            IReadOnlyList<ClearRewardBlankItem> pcRoomCardBlankItems = null)
         {
             _dropProfiles = dropProfiles
                 ?? new Dictionary<string, ClearRewardDropLevel[]>(
@@ -78,12 +80,16 @@ namespace DfoServer.GameWorld
             _gradeRanges = gradeRanges
                 ?? new Dictionary<int, ClearRewardGradeRange>();
             _rarityControl = rarityControl ?? Array.Empty<int>();
+            _pcRoomCardBlankItems = pcRoomCardBlankItems
+                ?? Array.Empty<ClearRewardBlankItem>();
         }
 
         internal double PaidCardCreateRate { get; }
         internal int ItemTypeCount => _itemTypeWeights.Length;
         internal int RarityThresholdCount => _rarityThresholds.Length;
         internal IReadOnlyList<int> RarityControl => _rarityControl;
+        internal IReadOnlyList<ClearRewardBlankItem> PcRoomCardBlankItems =>
+            _pcRoomCardBlankItems;
 
         internal int GetDropProbability(ClearRewardDropProfile profile, int level)
         {
@@ -233,6 +239,21 @@ namespace DfoServer.GameWorld
         }
     }
 
+    internal readonly struct ClearRewardBlankItem
+    {
+        internal ClearRewardBlankItem(int weight, int itemId, int count)
+        {
+            Weight = weight;
+            ItemId = itemId;
+            Count = count;
+        }
+
+        internal int Weight { get; }
+        internal int ItemId { get; }
+        internal int Count { get; }
+        internal bool IsActivatable => Weight > 0 && ItemId > 0 && Count > 0;
+    }
+
     internal static class ClearRewardDefinitionCatalog
     {
         private const string ConfigPath = "etc/itemdropinfo_clearreward.etc";
@@ -262,7 +283,8 @@ namespace DfoServer.GameWorld
                 ParsePairs(root.GetChild("gold card cost table"), text),
                 ParseFirstDouble(root.GetChild("gold card create rate"), text),
                 ParseGradeRanges(root.GetChild("item drop ref table"), text),
-                ParseInts(root.GetChild("item drop rarity control"), text));
+                ParseInts(root.GetChild("item drop rarity control"), text),
+                ParseBlankItems(root.GetChild("pcroom card blank item"), text));
         }
 
         private static ClearRewardDefinition Load()
@@ -273,7 +295,8 @@ namespace DfoServer.GameWorld
                 FileLogger.Log(
                     $"[ClearRewardDefinition] loaded: itemTypes={definition.ItemTypeCount} " +
                     $"rarities={definition.RarityThresholdCount} " +
-                    $"level86Cost={definition.GetPaidCardCost(86)}");
+                    $"level86Cost={definition.GetPaidCardCost(86)} " +
+                    $"pcroomBlank={definition.PcRoomCardBlankItems.Count}");
                 return definition;
             }
             catch (Exception ex)
@@ -327,6 +350,35 @@ namespace DfoServer.GameWorld
             }
 
             Flush();
+            return result;
+        }
+
+        private static IReadOnlyList<ClearRewardBlankItem> ParseBlankItems(
+            ScriptNode node,
+            string text)
+        {
+            var values = ParseInts(node, text);
+            if (values.Length == 0)
+                return Array.Empty<ClearRewardBlankItem>();
+
+            var result = new List<ClearRewardBlankItem>(values.Length / 3);
+            var index = 0;
+            while (index + 2 < values.Length)
+            {
+                result.Add(new ClearRewardBlankItem(
+                    values[index],
+                    values[index + 1],
+                    values[index + 2]));
+                index += 3;
+            }
+
+            if (index != values.Length)
+            {
+                FileLogger.Log(
+                    "[ClearRewardDefinition] pcroom card blank item leftover " +
+                    "tokens ignored; extra card stays fail-closed for those rows");
+            }
+
             return result;
         }
 

@@ -50,6 +50,7 @@ namespace DfoServer.Game.Dungeon
         internal bool PaidCardUsesDevilContract;
         internal ClearRewardGenerator.CardReward FreeGold;
         internal ClearRewardGenerator.CardReward FreeItem;
+        internal BlackDiamondCardReward BlackDiamondCardReward;
         internal IReadOnlyList<ClearRewardGenerator.CardReward>
             TowerRewardCandidates = Array.Empty<ClearRewardGenerator.CardReward>();
         internal IReadOnlyList<TowerOfDespairGrantedReward>

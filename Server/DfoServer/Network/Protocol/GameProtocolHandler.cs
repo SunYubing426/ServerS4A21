@@ -41,6 +41,7 @@ namespace DfoServer.Network
         private readonly CeraShopHandler _ceraShopHandler;
         private readonly LuckyStarHandler _luckyStarHandler;
         private readonly RentalHandler _rentalHandler;
+        private readonly VendingMachineHandler _vendingMachineHandler;
         private readonly MailboxHandler _mailboxHandler;
         private readonly CollectionBoxHandler _collectionBoxHandler;
         private readonly ShopCoinEventHandler _shopCoinEventHandler;
@@ -198,6 +199,7 @@ namespace DfoServer.Network
             _skillHandler = featureHandlers.Skill;
             _luckyStarHandler = featureHandlers.LuckyStar;
             _rentalHandler = featureHandlers.Rental;
+            _vendingMachineHandler = featureHandlers.VendingMachine;
             _mercenaryExpeditionHandler = featureHandlers.MercenaryExpedition;
             _mailboxHandler = featureHandlers.Mailbox;
             _collectionBoxHandler = featureHandlers.CollectionBox;
@@ -952,6 +954,7 @@ namespace DfoServer.Network
             d[0x02A8] = (s, h, b) =>
                 s.SendPacketAsync(GamePacketEnvelopeBuilder.Build(0x01, 0x02A8, new byte[] { 0x00, 0x00 }));
             d[RentalHandler.CommandType] = _rentalHandler.HandleRentWeapon;
+            d[VendingMachineHandler.CommandType] = _vendingMachineHandler.HandleUse;
             d[(ushort)CmdPacketTypeA21.CHARGE_RENTPOINT] =
                 _luckyStarHandler.HandleShopPurchasePacket;
             d[(ushort)CmdPacketType.GET_EXPAND_EXP_GAGE_REWARD] = _growthCapsuleHandler.HandleClaimAsync;

@@ -79,7 +79,16 @@ namespace DfoServer.Game.DailyReset
 
         // (conn,tx) 变体: 与同事务内的其他写入(如发放物品)一起提交/回滚。
         public bool TryClaimFlag(SqliteConnection conn, SqliteTransaction tx, int characterId, string key, string period = PeriodDay)
-            => TryIncrementCounter(conn, tx, characterId, key, 1, period);
+            => TryClaimFlag(conn, tx, characterId, key, period, DateTime.UtcNow);
+
+        public bool TryClaimFlag(
+            SqliteConnection conn,
+            SqliteTransaction tx,
+            int characterId,
+            string key,
+            string period,
+            DateTime utcNow)
+            => TryIncrementCounter(conn, tx, characterId, key, 1, period, utcNow);
 
         public bool IsClaimed(int characterId, string key)
             => GetCounter(characterId, key) > 0;
@@ -132,12 +141,22 @@ CREATE INDEX IF NOT EXISTS idx_character_usable_count_limits_character_day
 
         // (conn,tx) 变体: 与同事务内的其他写入一起提交/回滚。
         public bool TryIncrementCounter(SqliteConnection conn, SqliteTransaction tx, int characterId, string key, int cap, string period = PeriodDay)
+            => TryIncrementCounter(conn, tx, characterId, key, cap, period, DateTime.UtcNow);
+
+        public bool TryIncrementCounter(
+            SqliteConnection conn,
+            SqliteTransaction tx,
+            int characterId,
+            string key,
+            int cap,
+            string period,
+            DateTime utcNow)
         {
             ValidatePeriod(period);
             if (cap <= 0)
                 return false;
 
-            EnsureRowAndRollover(conn, tx, characterId);
+            EnsureRowAndRollover(conn, tx, characterId, utcNow);
             using (var cmd = conn.CreateCommand())
             {
                 cmd.Transaction = tx;
@@ -163,12 +182,23 @@ ON CONFLICT (character_id, counter_key) DO UPDATE SET value = value + 1 WHERE va
             long delta,
             long cap,
             string period = PeriodDay)
+            => TryAddCounterAtomic(conn, tx, characterId, key, delta, cap, period, DateTime.UtcNow);
+
+        public static bool TryAddCounterAtomic(
+            SqliteConnection conn,
+            SqliteTransaction tx,
+            int characterId,
+            string key,
+            long delta,
+            long cap,
+            string period,
+            DateTime utcNow)
         {
             ValidatePeriod(period);
             if (characterId <= 0 || string.IsNullOrWhiteSpace(key) || delta < 0 || cap < 0 || delta > cap)
                 return false;
 
-            EnsureRowAndRollover(conn, tx, characterId);
+            EnsureRowAndRollover(conn, tx, characterId, utcNow);
             if (delta == 0)
                 return true;
 
@@ -206,9 +236,19 @@ WHERE character_daily_counters.period = @period
         }
 
         public void AddCounter(SqliteConnection conn, SqliteTransaction tx, int characterId, string key, int delta, string period = PeriodDay)
+            => AddCounter(conn, tx, characterId, key, delta, period, DateTime.UtcNow);
+
+        public void AddCounter(
+            SqliteConnection conn,
+            SqliteTransaction tx,
+            int characterId,
+            string key,
+            int delta,
+            string period,
+            DateTime utcNow)
         {
             ValidatePeriod(period);
-            EnsureRowAndRollover(conn, tx, characterId);
+            EnsureRowAndRollover(conn, tx, characterId, utcNow);
             using (var cmd = conn.CreateCommand())
             {
                 cmd.Transaction = tx;
@@ -239,8 +279,16 @@ ON CONFLICT (character_id, counter_key) DO UPDATE SET value = value + @delta;";
         }
 
         public long GetCounter(SqliteConnection conn, SqliteTransaction tx, int characterId, string key)
+            => GetCounter(conn, tx, characterId, key, DateTime.UtcNow);
+
+        public long GetCounter(
+            SqliteConnection conn,
+            SqliteTransaction tx,
+            int characterId,
+            string key,
+            DateTime utcNow)
         {
-            EnsureRowAndRollover(conn, tx, characterId);
+            EnsureRowAndRollover(conn, tx, characterId, utcNow);
             using (var cmd = conn.CreateCommand())
             {
                 cmd.Transaction = tx;
@@ -403,9 +451,16 @@ WHERE character_id IN (
         // 建行(不存在时) + 跨天/跨周归零: 删除对应周期的计数行(删行=归零) + 拨门控。
         // 语句各自原子, 同一事务内执行; DELETE 必须先于对应门控 UPDATE(靠旧 day_id/week_id 判断过期)。
         private static void EnsureRowAndRollover(SqliteConnection conn, SqliteTransaction tx, int characterId)
+            => EnsureRowAndRollover(conn, tx, characterId, DateTime.UtcNow);
+
+        private static void EnsureRowAndRollover(
+            SqliteConnection conn,
+            SqliteTransaction tx,
+            int characterId,
+            DateTime utcNow)
         {
-            var today = TodayId();
-            var week = WeekId();
+            var today = TodayId(utcNow);
+            var week = WeekId(utcNow);
 
             using (var cmd = conn.CreateCommand())
             {

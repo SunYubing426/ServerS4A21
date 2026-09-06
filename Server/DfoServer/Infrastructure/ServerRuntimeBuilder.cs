@@ -806,7 +806,8 @@ namespace DfoServer.Infrastructure
                 eventJoustHandler,
                 eventPcRoomTimePointHandler,
                 eventDailyAttendanceAnytimeHandler,
-                eventTotalAttendanceHandler);
+                eventTotalAttendanceHandler,
+                new VendingMachineHandler(inventory.InventoryRefreshSender));
         }
 
         internal CharacterSessionLifecycleCoordinator

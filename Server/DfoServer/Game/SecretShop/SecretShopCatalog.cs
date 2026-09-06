@@ -293,20 +293,56 @@ namespace DfoServer.Game.SecretShop
 
         internal static IReadOnlyList<SecretShopItemCandidate> SelectItems(
             SecretShopItemPool pool,
-            Func<int, int> next)
+            Func<int, int> next,
+            SecretShopMemberPolicy policy = default)
         {
             if (pool == null || pool.SelectionCount <= 0)
                 return Array.Empty<SecretShopItemCandidate>();
 
-            var remaining = pool.Candidates.Where(x => x.Weight > 0).ToList();
-            var selected = new List<SecretShopItemCandidate>();
-            while (selected.Count < pool.SelectionCount && remaining.Count > 0)
+            var remaining = new List<WeightedCandidate>();
+            foreach (var candidate in pool.Candidates ?? Array.Empty<SecretShopItemCandidate>())
             {
-                var chosen = Pick(remaining, x => x.Weight, next);
-                selected.Add(chosen);
-                remaining.Remove(chosen);
+                if (candidate == null || candidate.Weight <= 0)
+                    continue;
+                var effectiveWeight = policy.ResolveEffectiveWeight(candidate);
+                if (effectiveWeight <= 0)
+                    continue;
+                remaining.Add(new WeightedCandidate(candidate, effectiveWeight));
+            }
+
+            var uniqueIds = 0;
+            if (policy.DoubleSelectionCount || policy.DeduplicateItemIds)
+            {
+                var seen = new HashSet<int>();
+                foreach (var row in remaining)
+                    seen.Add(row.Source.ItemId);
+                uniqueIds = seen.Count;
+            }
+
+            var targetCount = policy.ResolveSelectionCount(pool.SelectionCount, uniqueIds);
+            var selected = new List<SecretShopItemCandidate>();
+            while (selected.Count < targetCount && remaining.Count > 0)
+            {
+                var chosen = Pick(remaining, x => x.EffectiveWeight, next);
+                selected.Add(policy.MaterializeOfferCandidate(chosen.Source));
+                if (policy.DeduplicateItemIds)
+                    remaining.RemoveAll(x => x.Source.ItemId == chosen.Source.ItemId);
+                else
+                    remaining.Remove(chosen);
             }
             return selected;
+        }
+
+        private sealed class WeightedCandidate
+        {
+            internal WeightedCandidate(SecretShopItemCandidate source, int effectiveWeight)
+            {
+                Source = source;
+                EffectiveWeight = effectiveWeight;
+            }
+
+            internal SecretShopItemCandidate Source { get; }
+            internal int EffectiveWeight { get; }
         }
 
         private static T Pick<T>(IReadOnlyList<T> rows, Func<T, int> weight, Func<int, int> next)
