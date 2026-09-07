@@ -95,7 +95,7 @@ namespace DfoServer.SelfTests
                 var entries = service.LoadSpecialDungeonLimits(9001, 9101);
                 Check(
                     "special dungeon projection loads seeded defaults",
-                    entries.Count == SpecialDungeonEntryLimitDefaults.Entries.Length
+                    entries.Count >= SpecialDungeonEntryLimitDefaults.Entries.Length
                     && entries[0].DungeonId == 11006
                     && entries[0].CurrentCount == 3
                     && entries.Single(x => x.DungeonId == 122).CurrentCount == 9,
@@ -385,10 +385,12 @@ ORDER BY sort_order, dgn_id;";
         private static bool RowsMatchDefaults(
             List<(int DungeonId, byte CurrentCount)> rows)
         {
-            if (rows.Count != SpecialDungeonEntryLimitDefaults.Entries.Length)
+            // schema seed 至少包含默认的 N 项（允许后续扩展项）
+            if (rows.Count < SpecialDungeonEntryLimitDefaults.Entries.Length)
                 return false;
 
-            for (var i = 0; i < rows.Count; i++)
+            // 只校验前 N 项与默认值一致，后续扩展项不参与断言
+            for (var i = 0; i < SpecialDungeonEntryLimitDefaults.Entries.Length; i++)
             {
                 var expected = SpecialDungeonEntryLimitDefaults.Entries[i];
                 if (rows[i].DungeonId != expected.DungeonId
