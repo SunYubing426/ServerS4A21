@@ -4355,11 +4355,17 @@ namespace DfoServer.Network.Handlers.Dungeon
             if (run?.RunState == DungeonRunState.Active)
             {
                 var identity = run.CaptureIdentity();
-                await DungeonRunLifecycle.EndRunAsync(
+                // 用 TownReturn.ReturnAsync 替代裸 EndRunAsync: 前者内部会调
+                // EndRunAsync + 给客户端发"回城"NOTI,客户端 UI 才能从"选图"
+                // 或"副本内"状态干净退出。否则 captain 在被 EntryRejected
+                // 终止后,AdmissionRejects.SendAsync 只发了拒绝包(次数用尽
+                // 提示),客户端状态机没收到任何"本次选图已结束"的信号,UI
+                // 卡死在选图界面无法点"返回"。详见
+                // Server/DfoServer/Network/Handlers/Dungeon/DungeonTownReturnCoordinator.cs。
+                await _svc.TownReturn.ReturnAsync(
                     session,
-                    DungeonRunEndReason.EntryRejected,
                     identity,
-                    _svc.InstanceRegistry);
+                    DungeonRunEndReason.EntryRejected);
                 await _svc.AdmissionRejects.SendAsync(
                     session,
                     wireType,

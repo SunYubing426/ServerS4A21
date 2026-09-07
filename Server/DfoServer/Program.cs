@@ -62,6 +62,7 @@ namespace DfoServer
             ("--selftest-pvf-map-monster-parsing", SelfTests.PvfMapMonsterParsingSelfTest.Run),
             ("--selftest-sequential-dungeon-info-protocol", SelfTests.SequentialDungeonInfoProtocolSelfTest.Run),
             ("--selftest-licensed-dungeon", SelfTests.LicensedDungeonSelfTest.Run),
+            ("--selftest-anton-awakening-daily-reset", SelfTests.AntonAwakeningDailyResetSelfTest.Run),
             ("--selftest-experience-item-definition", SelfTests.ExperienceItemDefinitionSelfTest.Run),
         };
 
@@ -173,6 +174,14 @@ namespace DfoServer
             if (migrateIndex >= 0)
             {
                 Environment.Exit(RunA21InventoryDatabaseMigration(args, migrateIndex));
+                return;
+            }
+
+            // Anton_Awakening 实机测试用 GM 入口（需停服执行）。
+            // 用法：DfoServer.exe --gm-anton-seed <characterId|name> [--gm-anton-mode <...>] [--gm-anton-db <path>]
+            if (Array.IndexOf(args, "--gm-anton-seed") >= 0)
+            {
+                Environment.Exit(Game.Admin.AntonGmSeedCommand.Run(args));
                 return;
             }
             GameNetworkConfig.Configure(args);

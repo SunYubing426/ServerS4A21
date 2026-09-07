@@ -1,3 +1,4 @@
+using DfoServer.Game.DailyReset;
 using DfoServer.Game.SelectCharacter;
 using DfoServer.GameWorld;
 using DfoServer.Infrastructure;
@@ -93,6 +94,9 @@ namespace DfoServer.Game.Dungeon
             _connectionString = (database ?? throw new ArgumentNullException(nameof(database)))
                 .ConnectionString;
         }
+
+        // 暴露连接字符串供登录时的跨天重置复用同一 Sqlite 数据库（同一进程同一文件）。
+        internal string ConnectionStringForLoginReset => _connectionString;
 
         internal List<DungeonPermissionEntrySnapshot> Load(int accountId)
         {
@@ -319,18 +323,31 @@ ORDER BY dungeon_id;";
 
     internal sealed class DungeonDifficultyPermissionService
     {
+        // Anton_Awakening (暴走安徒恩) 副本 ID：黑雾之源/震颤的大地/擎天之柱/能量阻截战/黑色火山
+        private static readonly int[] AntonAwakeningDungeonIds =
+            { 243, 244, 245, 246, 247 };
+
         private readonly AccountDungeonPermissionRepository _repository;
+        private readonly DailyResetService _dailyReset;
 
         internal DungeonDifficultyPermissionService(
             string databasePath,
             string schemaFilePath)
-            : this(new GameDatabase(databasePath, schemaFilePath))
+            : this(new GameDatabase(databasePath, schemaFilePath), null)
         {
         }
 
         internal DungeonDifficultyPermissionService(IGameDatabase database)
+            : this(database, null)
+        {
+        }
+
+        internal DungeonDifficultyPermissionService(
+            IGameDatabase database,
+            DailyResetService dailyReset)
         {
             _repository = new AccountDungeonPermissionRepository(database);
+            _dailyReset = dailyReset;
         }
 
         internal IReadOnlyList<DungeonPermissionEntrySnapshot>
@@ -340,6 +357,30 @@ ORDER BY dungeon_id;";
                     characterPermissions)
         {
             var result = new List<DungeonPermissionEntrySnapshot>();
+
+            // Anton_Awakening 跨天重置（登录时检测 06:00 切日）
+            if (accountId > 0 && _dailyReset != null)
+            {
+                try
+                {
+                    using (var conn = new SqliteConnection(
+                        _repository.ConnectionStringForLoginReset))
+                    {
+                        conn.Open();
+                        using (var tx = conn.BeginTransaction(deferred: false))
+                        {
+                            TryResetAntonAwakeningForAccount(accountId, conn, tx);
+                            tx.Commit();
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    FileLogger.Log(
+                        $"[AntonAwakening] login reset failed account={accountId}: {ex.Message}");
+                }
+            }
+
             result.AddRange(LoadAccountPermissions(accountId));
 
             if (characterPermissions != null)
@@ -352,6 +393,53 @@ ORDER BY dungeon_id;";
             }
 
             return DungeonPermissionProjector.ProjectForClient(result);
+        }
+
+        /// <summary>
+        /// 跨天时（北京时间 06:00 切日）清空 account 下所有 character 的
+        /// Anton_Awakening (243-247) 权限行。dungeon_limit_records 由 day_id 自然失效。
+        /// 不抛异常：失败时返回 false 并由 BuildLoginPermissions 走原流程。
+        /// </summary>
+        internal bool TryResetAntonAwakeningForAccount(
+            int accountId,
+            SqliteConnection connection,
+            SqliteTransaction transaction)
+        {
+            if (accountId <= 0 || connection == null || transaction == null)
+                return false;
+
+            if (_dailyReset == null)
+                return false;
+
+            bool applied;
+            if (!_dailyReset.TryRunAccountFirstLoginReset(
+                    connection,
+                    transaction,
+                    accountId,
+                    DateTime.UtcNow,
+                    resetAction: (conn, tx) =>
+                    {
+                        using (var cmd = new SqliteCommand(
+                            @"
+DELETE FROM character_dungeon_permissions
+WHERE dungeon_id IN (243, 244, 245, 246, 247)
+  AND character_id IN (
+      SELECT character_id FROM characters WHERE account_id = @aid
+  );",
+                            conn,
+                            tx))
+                        {
+                            cmd.Parameters.AddWithValue("@aid", accountId);
+                            cmd.ExecuteNonQuery();
+                        }
+                        return true;
+                    },
+                    out applied))
+            {
+                return false;
+            }
+
+            return applied;
         }
 
         internal IReadOnlyList<DungeonPermissionEntrySnapshot>

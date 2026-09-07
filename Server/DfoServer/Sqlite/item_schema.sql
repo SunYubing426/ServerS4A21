@@ -897,6 +897,16 @@ INSERT OR IGNORE INTO dungeon_limit_config (
     (4128, 'charac', 1, 1, 24),
     (4123, 'charac', 3, 1, 25);
 
+-- A21 Anton_Awakening (暴走安徒恩) 每日限次：通关黑色火山 (247) 后 5 个副本全部锁住。
+INSERT OR IGNORE INTO dungeon_limit_config (
+    dgn_id, scope_type, limit_count, enabled, sort_order
+) VALUES
+    (243, 'charac', 1, 1, 100),
+    (244, 'charac', 1, 1, 101),
+    (245, 'charac', 1, 1, 102),
+    (246, 'charac', 1, 1, 103),
+    (247, 'charac', 1, 1, 104);
+
 CREATE TABLE IF NOT EXISTS dungeon_limit_records (
     account_id INTEGER NOT NULL,
     character_id INTEGER NOT NULL DEFAULT 0 CHECK (character_id >= 0),

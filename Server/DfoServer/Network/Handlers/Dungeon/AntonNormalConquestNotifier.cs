@@ -97,6 +97,7 @@ namespace DfoServer.Network.Handlers.Dungeon
             {
                 if (!_application.TryApplyClear(
                         session.Player.CharacterId,
+                        session.Account?.AccountId ?? 0,
                         run.DungeonId,
                         out var result))
                 {
