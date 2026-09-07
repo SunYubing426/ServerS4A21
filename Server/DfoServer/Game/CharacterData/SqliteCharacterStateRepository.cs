@@ -3,6 +3,7 @@ using DfoServer.Game.Inventory;
 using DfoServer.Infrastructure;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Data.Sqlite;
 
 namespace DfoServer.Game.CharacterData
@@ -301,6 +302,50 @@ namespace DfoServer.Game.CharacterData
                         characterId);
                     tx.Commit();
                     return snapshot;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 按 dungeon_id 列表删除指定角色的所有匹配权限行。
+        /// 返回实际删除的行数；dungeonIds 为空或全 0 时返回 0，不抛异常。
+        /// 用于 Anton_Awakening 每日重置和通关黑色火山后的清空逻辑。
+        /// </summary>
+        public int DeleteDungeonPermissions(
+            int characterId,
+            IReadOnlyCollection<int> dungeonIds)
+        {
+            if (characterId <= 0 || dungeonIds == null || dungeonIds.Count == 0)
+                return 0;
+
+            var filtered = dungeonIds
+                .Where(id => id > 0 && id <= ushort.MaxValue)
+                .Distinct()
+                .ToList();
+            if (filtered.Count == 0)
+                return 0;
+
+            using (var conn = new SqliteConnection(_connectionString))
+            {
+                conn.Open();
+                using (var tx = conn.BeginTransaction(deferred: false))
+                {
+                    var parameterNames = new List<string>(filtered.Count);
+                    for (var i = 0; i < filtered.Count; i++)
+                        parameterNames.Add($"@d{i}");
+
+                    var sql = $"DELETE FROM character_dungeon_permissions " +
+                              $"WHERE character_id = @cid AND dungeon_id IN ({string.Join(",", parameterNames)})";
+
+                    using (var cmd = new SqliteCommand(sql, conn, tx))
+                    {
+                        cmd.Parameters.AddWithValue("@cid", characterId);
+                        for (var i = 0; i < filtered.Count; i++)
+                            cmd.Parameters.AddWithValue($"@d{i}", filtered[i]);
+                        var deleted = cmd.ExecuteNonQuery();
+                        tx.Commit();
+                        return deleted;
+                    }
                 }
             }
         }
