@@ -10,6 +10,7 @@ namespace DfoServer.Infrastructure
     {
         internal GameProtocolFeatureHandlers(
             LotteryItemHandler lotteryItem,
+            VendingMachineHandler vendingMachine,
             PetCreatureHandler petCreature,
             SecretShopHandler secretShop,
             StaminaHandler stamina,
@@ -33,6 +34,8 @@ namespace DfoServer.Infrastructure
         {
             LotteryItem = lotteryItem
                 ?? throw new ArgumentNullException(nameof(lotteryItem));
+            VendingMachine = vendingMachine
+                ?? throw new ArgumentNullException(nameof(vendingMachine));
             PetCreature = petCreature
                 ?? throw new ArgumentNullException(nameof(petCreature));
             SecretShop = secretShop
@@ -71,6 +74,8 @@ namespace DfoServer.Infrastructure
         }
 
         internal LotteryItemHandler LotteryItem { get; }
+
+        internal VendingMachineHandler VendingMachine { get; }
 
         internal PetCreatureHandler PetCreature { get; }
 

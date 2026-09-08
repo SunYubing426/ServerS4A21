@@ -14,6 +14,104 @@ namespace DfoServer.Game.Premium
     public static class PremiumService
     {
         public const ushort DefaultServiceType = 1;
+        // A21 PVF 的黑钻/Premium-PC-room 业务类型；挑战者包裹(16)不属于黑钻。
+        public const int BlackDiamondPremiumType = 12;
+
+        public static bool HasActiveBlackDiamond(string connectionString, int accountId)
+        {
+            return HasActivePremium(connectionString, accountId, BlackDiamondPremiumType);
+        }
+
+        internal static bool HasActiveBlackDiamond(SqliteConnection connection, SqliteTransaction transaction, int accountId)
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "SELECT 1 FROM account_premiums WHERE account_id=@aid AND premium_type=@type AND end_time>@now;";
+            command.Parameters.AddWithValue("@aid", accountId);
+            command.Parameters.AddWithValue("@type", BlackDiamondPremiumType);
+            command.Parameters.AddWithValue("@now", DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+            return command.ExecuteScalar() != null;
+        }
+
+        internal static bool TryActivateContractInTransaction(SqliteConnection connection, SqliteTransaction transaction,
+            int accountId, int itemTemplateId, int count, out int premiumType, out long remaining)
+        {
+            premiumType = 0;
+            remaining = 0;
+            if (connection == null || transaction == null || accountId <= 0 || count <= 0
+                || !TryResolveContractItem(itemTemplateId, out premiumType, out var days)) return false;
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            remaining = UpsertPremiumExpire(connection, transaction, accountId, premiumType, now,
+                checked((long)days * 86400 * count)) - now;
+            return true;
+        }
+
+        internal static async Task NotifyCommittedContract(EnhancedClientSession session, int accountId,
+            int premiumType, long remaining, IGameDatabase database)
+        {
+            await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(0x00,
+                (ushort)NotiPacketTypeA21.CERA_SPECIALITEM, BuildCeraSpecialItemNotification(premiumType, remaining)));
+            await SendPremiumServiceRefresh(session, accountId, database);
+        }
+
+        public static void ApplyBlackDiamondToUserInfo(
+            string connectionString,
+            int accountId,
+            UserInfoMinimumTailSnapshot tail)
+        {
+            if (tail == null)
+                return;
+
+            var active = HasActiveBlackDiamond(connectionString, accountId);
+            // A21 USERINFO 固定尾部：首字节是网吧状态，第二字节是黑钻身份。
+            tail.IsPremiumPcRoom = active ? (byte)1 : (byte)0;
+            tail.ServerGroupId = active ? (byte)1 : (byte)0;
+        }
+
+        // 选角/进号完成后补发黑钻激活状态，建立客户端黑钻售货机的状态缓存。
+        public static async Task NotifyBlackDiamondStateAsync(
+            EnhancedClientSession session,
+            int accountId,
+            IGameDatabase database)
+        {
+            try
+            {
+                if (session == null || accountId <= 0 || database == null)
+                    return;
+
+                long endTime = 0;
+                using (var conn = new SqliteConnection(database.ConnectionString))
+                {
+                    conn.Open();
+                    using (var cmd = conn.CreateCommand())
+                    {
+                        cmd.CommandText = "SELECT end_time FROM account_premiums "
+                            + "WHERE account_id=@aid AND premium_type=@type AND end_time>@now "
+                            + "ORDER BY end_time DESC LIMIT 1;";
+                        cmd.Parameters.AddWithValue("@aid", accountId);
+                        cmd.Parameters.AddWithValue("@type", BlackDiamondPremiumType);
+                        cmd.Parameters.AddWithValue("@now", DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+                        var val = cmd.ExecuteScalar();
+                        if (val != null && val != DBNull.Value)
+                            endTime = Convert.ToInt64(val);
+                    }
+                }
+                if (endTime <= 0)
+                    return;
+
+                var remaining = endTime - DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
+                    0x00,
+                    (ushort)NotiPacketTypeA21.CERA_SPECIALITEM,
+                    BuildCeraSpecialItemNotification(BlackDiamondPremiumType, remaining)));
+                await SendPremiumServiceRefresh(session, accountId, database);
+                FileLogger.Log($"[PremiumService] BlackDiamond state notified: account={accountId} remaining={remaining}");
+            }
+            catch (Exception ex)
+            {
+                FileLogger.Log($"[PremiumService] black diamond notify failed: {ex.Message}");
+            }
+        }
 
         private const int PremiumServiceEntryExpireBase = 6;
         private const int PremiumServiceEntryUsedCountBase = 10;

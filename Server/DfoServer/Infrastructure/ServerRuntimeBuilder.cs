@@ -773,6 +773,11 @@ namespace DfoServer.Infrastructure
 
             return new GameProtocolFeatureHandlers(
                 lotteryItem,
+                new VendingMachineHandler(
+                    new Game.VendingMachine.VendingMachineService(
+                        inventory.OverflowRewardSink),
+                    inventory.InventoryRefreshSender,
+                    core.Database),
                 new PetCreatureHandler(
                     core.SelectCharacterDataSource,
                     inventory.InventoryRefreshSender),
