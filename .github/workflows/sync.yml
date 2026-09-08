@@ -1,8 +1,8 @@
-# 自动备份同步：每周从 gitgud.io/rewio/ServerS4A21 拉最新内容，同步到本仓库的 upstream-backup 分支。
+# 自动备份同步：每天从 gitgud.io/rewio/ServerS4A21 拉最新内容，同步到本仓库的 upstream-backup 分支。
 #
 # 架构：
 #   - **master** 是你的定制版（上游 + 你的修复），本工作流**永远不会动 master**。
-#   - **upstream-backup** 每周自动更新为"纯上游"备份：树与 gitgud 源码 100% 一致、历史线性。
+#   - **upstream-backup** 每天自动更新为"纯上游"备份：树与 gitgud 源码 100% 一致、历史线性。
 #   - 本文件放在 master（默认分支）上，GitHub 定时任务从默认分支读取执行，因此无需切换默认分支。
 #
 # 上游更新同步到你的定制版（在你电脑上）：
@@ -15,8 +15,8 @@ name: Sync from gitgud
 
 on:
   schedule:
-    # 每周一 03:23 UTC（北京时间周一 11:23）
-    - cron: "23 3 * * 1"
+    # 每天 03:23 UTC（北京时间每天 11:23）
+    - cron: "23 3 * * *"
   workflow_dispatch: {}
 
 permissions:
