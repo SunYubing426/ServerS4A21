@@ -2,6 +2,7 @@ using DfoServer.Game.Inventory;
 using DfoServer.Game.Dungeon;
 using DfoServer.Game.Events.DailyAttendanceAnytime;
 using DfoServer.Game.Events.RecommendedDungeons;
+using DfoServer.Game.Events.GrowSupport;
 using DfoServer.Game.Events.TotalAttendance;
 using DfoServer.Game.Mercenary;
 using DfoServer.Game.Quests;
@@ -59,6 +60,7 @@ namespace DfoServer.Network.Handlers
                 null,
                 null,
                 null,
+                null,
                 database)
         {
         }
@@ -79,6 +81,7 @@ namespace DfoServer.Network.Handlers
             RecommendDungeonClearStatsService recommendDungeonClears = null,
             DailyAttendanceAnytimeService dailyAttendanceAnytime = null,
             TotalAttendanceService totalAttendance = null,
+            GrowSupportService growSupport = null,
             Game.Dungeon.DungeonInstanceRegistry instanceRegistry = null,
             Game.Raid.RaidManager raidManager = null,
             IGameDatabase database = null)
@@ -98,6 +101,7 @@ namespace DfoServer.Network.Handlers
                 recommendDungeonClears,
                 dailyAttendanceAnytime,
                 totalAttendance,
+                growSupport,
                 persistentEffects,
                 instanceRegistry,
                 raidManager,

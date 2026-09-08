@@ -21,6 +21,8 @@ namespace DfoServer.Game.Events
 
         internal void Initialize()
         {
+            new EventDefaultsApplier(Database).Apply();
+
             var joustConfig = JoustConfigProvider.Instance;
             joustConfig.Warmup();
             new JoustRepository(Database)

@@ -46,6 +46,10 @@ namespace DfoServer.Network.Handlers
         private readonly EventDailyAttendanceAnytimeHandler
             _eventDailyAttendanceAnytimeHandler;
         private readonly EventTotalAttendanceHandler _eventTotalAttendanceHandler;
+        private readonly EventLoginRewardHandler _eventLoginRewardHandler;
+        private readonly EventOnlineAttendanceHandler _eventOnlineAttendanceHandler;
+        private readonly EventGrowSupportHandler _eventGrowSupportHandler;
+        private readonly EventBurningTimeHandler _eventBurningTimeHandler;
         private readonly PvpRoomHandler _pvpRoomHandler;
         private readonly InventoryRefreshSender _inventoryRefreshSender;
         private readonly IGameDatabase _database;
@@ -68,6 +72,10 @@ namespace DfoServer.Network.Handlers
             EventPcRoomTimePointHandler eventPcRoomTimePointHandler,
             EventDailyAttendanceAnytimeHandler eventDailyAttendanceAnytimeHandler,
             EventTotalAttendanceHandler eventTotalAttendanceHandler,
+            EventLoginRewardHandler eventLoginRewardHandler,
+            EventOnlineAttendanceHandler eventOnlineAttendanceHandler,
+            EventGrowSupportHandler eventGrowSupportHandler,
+            EventBurningTimeHandler eventBurningTimeHandler,
             PvpRoomHandler pvpRoomHandler,
             InventoryRefreshSender inventoryRefreshSender,
             IGameDatabase database,
@@ -90,6 +98,10 @@ namespace DfoServer.Network.Handlers
             _eventDailyAttendanceAnytimeHandler =
                 eventDailyAttendanceAnytimeHandler;
             _eventTotalAttendanceHandler = eventTotalAttendanceHandler;
+            _eventLoginRewardHandler = eventLoginRewardHandler;
+            _eventOnlineAttendanceHandler = eventOnlineAttendanceHandler;
+            _eventGrowSupportHandler = eventGrowSupportHandler;
+            _eventBurningTimeHandler = eventBurningTimeHandler;
             _pvpRoomHandler = pvpRoomHandler;
             _inventoryRefreshSender = inventoryRefreshSender;
             _database = database ?? throw new ArgumentNullException(nameof(database));
@@ -505,6 +517,18 @@ namespace DfoServer.Network.Handlers
                             .NotifyStateOnLoginAsync(session);
                     if (_eventTotalAttendanceHandler != null)
                         await _eventTotalAttendanceHandler
+                            .NotifyStateOnLoginAsync(session);
+                    if (_eventLoginRewardHandler != null)
+                        await _eventLoginRewardHandler
+                            .NotifyStateOnLoginAsync(session);
+                    if (_eventOnlineAttendanceHandler != null)
+                        await _eventOnlineAttendanceHandler
+                            .NotifyStateOnLoginAsync(session);
+                    if (_eventGrowSupportHandler != null)
+                        await _eventGrowSupportHandler
+                            .NotifyStateOnLoginAsync(session);
+                    if (_eventBurningTimeHandler != null)
+                        await _eventBurningTimeHandler
                             .NotifyStateOnLoginAsync(session);
                     // 上线 hook：初始好友列表已由 init 包流下发
                     // （UnitedServerFriendInfoBodyBuilder），这里只做单向推送——
@@ -926,6 +950,22 @@ namespace DfoServer.Network.Handlers
             EnhancedClientSession session,
             string source)
         {
+            if (_eventOnlineAttendanceHandler != null)
+            {
+                try
+                {
+                    await _eventOnlineAttendanceHandler.NotifySessionEndingAsync(
+                        session,
+                        source);
+                }
+                catch (Exception ex)
+                {
+                    FileLogger.Log(
+                        $"[{ProtocolName}] {source} onlineattendance cleanup " +
+                        $"failed cid={session?.Player?.CharacterId ?? 0}: {ex}");
+                }
+            }
+
             if (_eventPcRoomTimePointHandler == null)
                 return;
 

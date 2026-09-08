@@ -3,6 +3,7 @@ using DfoServer.Game.Accounts;
 using DfoServer.Game.CharacterData;
 using DfoServer.Game.Characters;
 using DfoServer.Game.Events.DailyAttendanceAnytime;
+using DfoServer.Game.Events.GrowSupport;
 using DfoServer.Game.Events.RecommendedDungeons;
 using DfoServer.Game.Events.TotalAttendance;
 using DfoServer.Game.Inventory;
@@ -34,6 +35,7 @@ namespace DfoServer.Network.Handlers.Dungeon
         internal RecommendDungeonClearStatsService RecommendDungeonClears { get; }
         internal DailyAttendanceAnytimeService DailyAttendanceAnytime { get; }
         internal TotalAttendanceService TotalAttendance { get; }
+        internal GrowSupportService GrowSupport { get; }
         internal Game.Dungeon.DungeonItemAcquisitionService ItemAcquisition { get; }
         internal DungeonPersistentMechanismCoordinator PersistentMechanisms { get; }
         internal SqliteCharacterRepository CharacterRepository { get; }
@@ -85,6 +87,7 @@ namespace DfoServer.Network.Handlers.Dungeon
             RecommendDungeonClearStatsService recommendDungeonClears = null,
             DailyAttendanceAnytimeService dailyAttendanceAnytime = null,
             TotalAttendanceService totalAttendance = null,
+            GrowSupportService growSupport = null,
             Game.Dungeon.DungeonPersistentEffectApplicationService persistentEffects = null,
             Game.Dungeon.DungeonInstanceRegistry instanceRegistry = null,
             Game.Raid.RaidManager raidManager = null,
@@ -125,6 +128,7 @@ namespace DfoServer.Network.Handlers.Dungeon
                 ?? new RecommendDungeonClearStatsService(Database);
             DailyAttendanceAnytime = dailyAttendanceAnytime;
             TotalAttendance = totalAttendance;
+            GrowSupport = growSupport;
             Subtype1Repository = new SqliteSubtype1Repository(
                 Database);
             CharacterStateRepository = new SqliteCharacterStateRepository(

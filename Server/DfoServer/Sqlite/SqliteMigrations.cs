@@ -49,6 +49,9 @@ namespace DfoServer.Sqlite
                 new MigrationStep(24, "add_license_dungeon_period_state", ApplyLicenseDungeonPeriodState),
                 new MigrationStep(25, "add_license_dungeon_progress", ApplyLicenseDungeonProgress),
                 new MigrationStep(26, "add_license_dungeon_unlock_conditions", ApplyLicenseDungeonUnlockConditions),
+                new MigrationStep(27, "add_login_reward_event", ApplyLoginRewardEvent),
+                new MigrationStep(28, "add_online_attendance_event", ApplyOnlineAttendanceEvent),
+                new MigrationStep(29, "add_grow_support_event", ApplyGrowSupportEvent),
             };
 
         internal static int CurrentVersion =>
@@ -473,6 +476,78 @@ CREATE TABLE IF NOT EXISTS character_license_dungeon_progress (
                 "character_license_dungeon_progress",
                 "no_revive_clear_count",
                 "INTEGER NOT NULL DEFAULT 0 CHECK (no_revive_clear_count >= 0)");
+        }
+
+        private static void ApplyLoginRewardEvent(
+            SqliteConnection connection,
+            SqliteTransaction transaction)
+        {
+            ExecuteSql(connection, transaction, @"
+CREATE TABLE IF NOT EXISTS event_login_reward_account (
+    account_id INTEGER NOT NULL,
+    event_id INTEGER NOT NULL,
+    season_id INTEGER NOT NULL DEFAULT 1,
+    last_claim_day_id INTEGER NOT NULL DEFAULT 0,
+    claimed_mask INTEGER NOT NULL DEFAULT 0,
+    updated_at_unix INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (account_id, event_id, season_id),
+    FOREIGN KEY (account_id) REFERENCES accounts(account_id) ON DELETE CASCADE
+);");
+        }
+
+        private static void ApplyOnlineAttendanceEvent(
+            SqliteConnection connection,
+            SqliteTransaction transaction)
+        {
+            ExecuteSql(connection, transaction, @"
+CREATE TABLE IF NOT EXISTS event_online_attendance_account (
+    account_id INTEGER NOT NULL,
+    event_id INTEGER NOT NULL,
+    season_id INTEGER NOT NULL DEFAULT 1,
+    sum_completed_count INTEGER NOT NULL DEFAULT 0
+        CHECK(sum_completed_count >= 0),
+    sum_claim_mask INTEGER NOT NULL DEFAULT 0,
+    updated_at_unix INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (account_id, event_id, season_id),
+    FOREIGN KEY (account_id) REFERENCES accounts(account_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS event_online_attendance_daily (
+    account_id INTEGER NOT NULL,
+    event_id INTEGER NOT NULL,
+    season_id INTEGER NOT NULL DEFAULT 1,
+    day_id INTEGER NOT NULL,
+    online_seconds INTEGER NOT NULL DEFAULT 0
+        CHECK(online_seconds >= 0),
+    time_claim_mask INTEGER NOT NULL DEFAULT 0,
+    updated_at_unix INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (account_id, event_id, season_id, day_id),
+    FOREIGN KEY (account_id) REFERENCES accounts(account_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_online_attendance_daily_day
+    ON event_online_attendance_daily(event_id, season_id, day_id);");
+        }
+
+        private static void ApplyGrowSupportEvent(
+            SqliteConnection connection,
+            SqliteTransaction transaction)
+        {
+            ExecuteSql(connection, transaction, @"
+CREATE TABLE IF NOT EXISTS event_grow_support_character (
+    account_id INTEGER NOT NULL,
+    character_id INTEGER NOT NULL,
+    event_id INTEGER NOT NULL,
+    season_id INTEGER NOT NULL DEFAULT 1,
+    level_reward_claim_mask INTEGER NOT NULL DEFAULT 0,
+    dungeon_clear_count INTEGER NOT NULL DEFAULT 0
+        CHECK(dungeon_clear_count >= 0),
+    dungeon_reward_claim_mask INTEGER NOT NULL DEFAULT 0,
+    updated_at_unix INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (account_id, character_id, event_id, season_id),
+    FOREIGN KEY (account_id) REFERENCES accounts(account_id) ON DELETE CASCADE,
+    FOREIGN KEY (character_id) REFERENCES characters(character_id) ON DELETE CASCADE
+);");
         }
 
         private static int ConvertCharacterNames(

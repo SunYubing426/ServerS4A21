@@ -5,7 +5,11 @@ using DfoServer.Game.DailyReset;
 using DfoServer.Game.Dungeon;
 using DfoServer.Game.Events;
 using DfoServer.Game.Events.DailyAttendanceAnytime;
+using DfoServer.Game.Events.GrowSupport;
+using DfoServer.Game.Events.BurningTime;
 using DfoServer.Game.Events.Joust;
+using DfoServer.Game.Events.LoginReward;
+using DfoServer.Game.Events.OnlineAttendance;
 using DfoServer.Game.Events.PcRoomTimePoint;
 using DfoServer.Game.Events.RecommendedDungeons;
 using DfoServer.Game.Events.TotalAttendance;
@@ -227,6 +231,24 @@ namespace DfoServer.Infrastructure
                     core.Database,
                     mailboxService);
             totalAttendanceService.Initialize();
+            var loginRewardService =
+                new LoginRewardService(
+                    core.Database,
+                    mailboxService);
+            loginRewardService.Initialize();
+            var onlineAttendanceService =
+                new OnlineAttendanceService(
+                    core.Database,
+                    mailboxService);
+            onlineAttendanceService.Initialize();
+            var growSupportService =
+                new GrowSupportService(
+                    core.Database,
+                    mailboxService);
+            growSupportService.Initialize();
+            var burningTimeService =
+                new BurningTimeService(core.Database);
+            burningTimeService.Initialize();
 
             var dependencies = new GameProtocolInventoryDependencies(
                 inventoryRefreshSender,
@@ -246,6 +268,10 @@ namespace DfoServer.Infrastructure
                 recommendDungeonClears,
                 dailyAttendanceAnytimeService,
                 totalAttendanceService,
+                loginRewardService,
+                onlineAttendanceService,
+                growSupportService,
+                burningTimeService,
                 new MailboxInventoryOverflowRewardSink(mailboxService));
             core.DungeonPersistentEffects.BindOverflowRewardSink(
                 dependencies.OverflowRewardSink);
@@ -544,6 +570,8 @@ namespace DfoServer.Infrastructure
                         inventory.DailyAttendanceAnytime,
                     totalAttendance:
                         inventory.TotalAttendance,
+                    growSupport:
+                        inventory.GrowSupport,
                     instanceRegistry: world.DungeonInstances,
                     raidManager: world.RaidManager,
                     database: core.Database));
@@ -770,6 +798,20 @@ namespace DfoServer.Infrastructure
             var eventTotalAttendanceHandler =
                 new EventTotalAttendanceHandler(
                     inventory.TotalAttendance);
+            var eventLoginRewardHandler =
+                new EventLoginRewardHandler(
+                    inventory.LoginReward);
+            var eventOnlineAttendanceHandler =
+                new EventOnlineAttendanceHandler(
+                    inventory.OnlineAttendance,
+                    world.Sessions);
+            eventOnlineAttendanceHandler.RegisterClock(ClockService.Instance);
+            var eventGrowSupportHandler =
+                new EventGrowSupportHandler(
+                    inventory.GrowSupport);
+            var eventBurningTimeHandler =
+                new EventBurningTimeHandler(
+                    inventory.BurningTime);
 
             return new GameProtocolFeatureHandlers(
                 lotteryItem,
@@ -833,7 +875,11 @@ namespace DfoServer.Infrastructure
                 eventJoustHandler,
                 eventPcRoomTimePointHandler,
                 eventDailyAttendanceAnytimeHandler,
-                eventTotalAttendanceHandler);
+                eventTotalAttendanceHandler,
+                eventLoginRewardHandler,
+                eventOnlineAttendanceHandler,
+                eventGrowSupportHandler,
+                eventBurningTimeHandler);
         }
 
         internal CharacterSessionLifecycleCoordinator
@@ -947,6 +993,10 @@ namespace DfoServer.Infrastructure
                 featureHandlers.EventPcRoomTimePoint,
                 featureHandlers.EventDailyAttendanceAnytime,
                 featureHandlers.EventTotalAttendance,
+                featureHandlers.EventLoginReward,
+                featureHandlers.EventOnlineAttendance,
+                featureHandlers.EventGrowSupport,
+                featureHandlers.EventBurningTime,
                 socialHandlers.PvpRoom,
                 inventory.InventoryRefreshSender,
                 core.Database,
