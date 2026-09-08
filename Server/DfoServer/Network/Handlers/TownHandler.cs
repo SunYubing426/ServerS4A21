@@ -462,7 +462,10 @@ namespace DfoServer.Network.Handlers
             if (!CanContinueTownProjection(session, projectionGuard))
                 return;
 
-            // 给每个已在场玩家推【新人】的 subtype0 + 城镇定位。
+            // 给每个已在场玩家只推【新人】的 subtype0 + 城镇定位。
+            // 旧玩家已经持有当前区域名册，0x0017 会增量插入新人；此处再发
+            // AREA_USERS 会触发客户端重建区域场景，并关闭商店、背包等当前窗口。
+            // 完整 AREA_USERS 只用于上面的进入者初始化和真正的离场名册对账。
             var selfAppearance = GamePacketEnvelopeBuilder.Build(
                 0x00,
                 0x0002,
@@ -476,28 +479,6 @@ namespace DfoServer.Network.Handlers
                 if (!CanContinueTownProjection(session, projectionGuard))
                     return;
 
-                // AREA_USERS 的首项必须是当前接收者自己。
-                var recipientRoster = new List<TownUserSnapshot>(others.Count + 1)
-                {
-                    TownAreaNotificationBuilder.CreateCurrentSnapshot(o.Player),
-                };
-                foreach (var peer in others)
-                {
-                    if (peer.Player.CharacterId != o.Player.CharacterId)
-                    {
-                        recipientRoster.Add(
-                            TownAreaNotificationBuilder.CreateCurrentSnapshot(
-                                peer.Player));
-                    }
-                }
-                recipientRoster.Add(selfSnapshot);
-                var recipientRosterPacket = GamePacketEnvelopeBuilder.Build(
-                    0x00,
-                    0x0018,
-                    TownAreaNotificationBuilder.BuildAreaUsers(
-                        townId,
-                        areaId,
-                        recipientRoster));
                 var recipient = o;
                 peerProjections.Add(SessionDirectory.TrySendBestEffortAsync(
                     async cancellationToken =>
@@ -519,15 +500,6 @@ namespace DfoServer.Network.Handlers
                         }
                         await recipient.SendPacketAsync(
                             selfArea,
-                            cancellationToken);
-                        if (!CanContinueTownProjection(
-                                session,
-                                projectionGuard))
-                        {
-                            return;
-                        }
-                        await recipient.SendPacketAsync(
-                            recipientRosterPacket,
                             cancellationToken);
                     },
                     $"town-presence characterId=" +
