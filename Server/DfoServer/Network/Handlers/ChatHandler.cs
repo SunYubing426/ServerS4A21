@@ -99,6 +99,12 @@ namespace DfoServer.Network.Handlers
             if (sendTasks.Count > 0)
                 await Task.WhenAll(sendTasks);
 
+            if (request.Mode == GuildMessageMode)
+            {
+                GuildActivityService.AwardDailyChatCoins(
+                    session.Player.CharacterId, session.Player.UserId);
+            }
+
             FileLogger.Log(
                 $"[GameProtocol] SEND_MESSAGE cid={session.Player.CharacterId} " +
                 $"uid={session.Player.UserId} mode={request.Mode} " +

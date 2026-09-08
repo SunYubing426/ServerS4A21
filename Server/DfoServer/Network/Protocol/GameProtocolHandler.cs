@@ -369,6 +369,13 @@ namespace DfoServer.Network
             d[0x02F4] = GuildHandler.Handle_GUILD_ALLY_LIST_02F4;
             d[0x02FB] = GuildHandler.Handle_GUILD_ALLY_LIST_02FB;
             d[0x02E9] = GuildHandler.Handle_TODAY_GUILD_ATTENDANCE_DETAIL_02E9;
+            d[0x02EA] = GuildHandler.Handle_REQ_GUILD_MILEAGE_HISTORY_02EA;
+            d[0x0328] = GuildHandler.Handle_GUILD_CONTRIBUTE_HISTORY_0328;
+            d[0x0312] = GuildHandler.Handle_CHANGE_GUILD_MARK_0312;
+            d[0x04C4] = GuildHandler.Handle_CONTRACT_OF_GUILD_04C4;
+            d[0x015A] = GuildHandler.Handle_GUILD_DONATE_015A;
+            d[0x04EC] = GuildHandler.Handle_GUILD_CHECKIN_04EC;
+            d[0x04ED] = GuildHandler.Handle_GUILD_CHECKIN_ONLINE_04ED;
             d[0x008C] = GuildHandler.Handle_GUILD_ALLY_LIST_008C;
             d[0x02B3] = GuildHandler.Handle_GUILD_PROMO_MODIFY_02B3;
             d[0x015C] = GuildHandler.Handle_REQUEST_JOIN_GUILD;
@@ -388,6 +395,16 @@ namespace DfoServer.Network
             d[0x0329] = GuildHandler.Handle_SET_REPRESENTATIVE_0329;
             d[0x009B] = GuildHandler.Handle_GUILD_MASTER_DELEGATE_009B;
             d[0x012F] = GuildHandler.Handle_BREAK_GUILD_012F;
+            d[0x02F8] = GuildHandler.Handle_BUY_GUILD_CONTENTS_02F8;
+            d[0x033B] = GuildHandler.Handle_SET_GUILD_RECOMMAND_CHANNEL_033B;
+
+            GuildWarehouseHandler.Bind(
+                _inventoryRefreshSender,
+                _worldDependencies.Sessions);
+            d[0x0105] = GuildWarehouseHandler.Handle;
+            d[0x00F7] = GuildWarehouseHandler.Handle;
+            d[0x00F8] = GuildWarehouseHandler.Handle;
+            d[0x00F9] = GuildWarehouseHandler.Handle;
         }
 
         private void RegisterPartyHandlers(GameCommandRegistry.GameCommandRegistrationGroup d)

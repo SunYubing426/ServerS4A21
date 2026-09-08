@@ -604,6 +604,10 @@ namespace DfoServer.Network.Handlers
             if (guild != null)
             {
                 await GuildHandler.SendGuildInfoAsync(session, guild);
+                GuildActivityService.RecordAttendance(ownerCharId);
+                GuildActivityService.AwardDailyLoginCoins(
+                    ownerCharId, session.Player?.UserId ?? 0);
+                GuildContributionService.SettleOverduePeriods();
                 _ = GuildHandler.BroadcastMemberListRefreshAsync(ownerCharId);
             }
             if (ownerAcctId > 0)

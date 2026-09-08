@@ -56,6 +56,7 @@ namespace DfoServer.Sqlite
                 new MigrationStep(31, "add_guild_grade_config", ApplyGuildGradeConfig),
                 new MigrationStep(32, "add_guild_applications", ApplyGuildApplications),
                 new MigrationStep(33, "add_guild_log", ApplyGuildLog),
+                new MigrationStep(34, "add_guild_economy_storage", ApplyGuildEconomyStorage),
             };
 
         internal static int CurrentVersion =>
@@ -613,6 +614,27 @@ CREATE TABLE IF NOT EXISTS guild_coin_claims (
     claimed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (character_id, claim_key)
 );
+CREATE TABLE IF NOT EXISTS guild_dungeon_clear_counts (
+    character_id INTEGER NOT NULL,
+    day_key TEXT NOT NULL,
+    clear_count INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (character_id, day_key)
+);
+CREATE TABLE IF NOT EXISTS guild_contract_claims (
+    character_id INTEGER NOT NULL,
+    claim_date TEXT NOT NULL,
+    guild_id INTEGER NOT NULL,
+    item_id INTEGER NOT NULL,
+    claimed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (character_id, claim_date)
+);
+CREATE TABLE IF NOT EXISTS guild_warehouse_items (
+    guild_id INTEGER NOT NULL,
+    slot_index INTEGER NOT NULL,
+    item_core BLOB NOT NULL,
+    PRIMARY KEY (guild_id, slot_index)
+);
 CREATE TABLE IF NOT EXISTS guild_contribution_events (
     event_id INTEGER PRIMARY KEY AUTOINCREMENT,
     source_key TEXT NOT NULL,
@@ -676,6 +698,34 @@ CREATE TABLE IF NOT EXISTS guild_grade_config (
     perm_bitmap INTEGER NOT NULL DEFAULT 0,
     grade_name TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (guild_id, grade)
+);");
+        }
+
+        private static void ApplyGuildEconomyStorage(
+            SqliteConnection connection,
+            SqliteTransaction transaction)
+        {
+            ExecuteSql(connection, transaction, @"
+CREATE TABLE IF NOT EXISTS guild_dungeon_clear_counts (
+    character_id INTEGER NOT NULL,
+    day_key TEXT NOT NULL,
+    clear_count INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (character_id, day_key)
+);
+CREATE TABLE IF NOT EXISTS guild_contract_claims (
+    character_id INTEGER NOT NULL,
+    claim_date TEXT NOT NULL,
+    guild_id INTEGER NOT NULL,
+    item_id INTEGER NOT NULL,
+    claimed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (character_id, claim_date)
+);
+CREATE TABLE IF NOT EXISTS guild_warehouse_items (
+    guild_id INTEGER NOT NULL,
+    slot_index INTEGER NOT NULL,
+    item_core BLOB NOT NULL,
+    PRIMARY KEY (guild_id, slot_index)
 );");
         }
 
