@@ -34,7 +34,8 @@ namespace DfoServer.Infrastructure
             EventLoginRewardHandler eventLoginReward,
             EventOnlineAttendanceHandler eventOnlineAttendance,
             EventGrowSupportHandler eventGrowSupport,
-            EventBurningTimeHandler eventBurningTime)
+            EventBurningTimeHandler eventBurningTime,
+            AuctionHandler auction)
         {
             LotteryItem = lotteryItem
                 ?? throw new ArgumentNullException(nameof(lotteryItem));
@@ -83,6 +84,8 @@ namespace DfoServer.Infrastructure
                 ?? throw new ArgumentNullException(nameof(eventGrowSupport));
             EventBurningTime = eventBurningTime
                 ?? throw new ArgumentNullException(nameof(eventBurningTime));
+            Auction = auction
+                ?? throw new ArgumentNullException(nameof(auction));
         }
 
         internal LotteryItemHandler LotteryItem { get; }
@@ -137,5 +140,7 @@ namespace DfoServer.Infrastructure
         internal EventGrowSupportHandler EventGrowSupport { get; }
 
         internal EventBurningTimeHandler EventBurningTime { get; }
+
+        internal AuctionHandler Auction { get; }
     }
 }

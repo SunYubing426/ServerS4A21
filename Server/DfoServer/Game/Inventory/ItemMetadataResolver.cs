@@ -956,6 +956,64 @@ namespace DfoServer.Game.Inventory
                     Path.Combine("stackable", entry.FilePath)));
         }
 
+        public static string ResolveEquipmentGroupName(int itemTemplateId)
+        {
+            if (itemTemplateId <= 0)
+                return null;
+            if (!TryLoadEquipmentFile(itemTemplateId, out var equipment))
+                return null;
+            var g = equipment.ItemGroupName;
+            return string.IsNullOrEmpty(g) ? null : g;
+        }
+
+        public static string ResolveEquipmentUsableJob(int itemTemplateId)
+        {
+            if (itemTemplateId <= 0)
+                return null;
+            if (!TryLoadEquipmentFile(itemTemplateId, out var equipment))
+                return null;
+            var j = equipment.UsableJob;
+            return string.IsNullOrEmpty(j) ? null : j;
+        }
+
+        public static string ResolveStackableExpertType(int itemTemplateId)
+        {
+            if (itemTemplateId <= 0)
+                return null;
+            try
+            {
+                if (!TryLoadStackableFile(itemTemplateId, out var stackable) || stackable == null)
+                    return null;
+                var t = stackable.ExpertType;
+                return string.IsNullOrEmpty(t) ? null : NormalizeEquipmentType(t);
+            }
+            catch (Exception ex)
+            {
+                FileLogger.Log($"[ItemMetadataResolver] ResolveStackableExpertType(0x{itemTemplateId:X8}) failed: {ex.Message}");
+                return null;
+            }
+        }
+
+        public static bool IsCreatureEgg(int itemTemplateId)
+        {
+            if (itemTemplateId <= 0)
+                return false;
+            try
+            {
+                if (!TryLoadEquipmentFile(itemTemplateId, out var equipment) || equipment == null)
+                    return false;
+                var et = equipment.EquipmentType;
+                if (string.IsNullOrWhiteSpace(et) || et.IndexOf("[creature]", StringComparison.OrdinalIgnoreCase) < 0)
+                    return false;
+                return equipment.SubType == 1;
+            }
+            catch (Exception ex)
+            {
+                FileLogger.Log($"[ItemMetadataResolver] IsCreatureEgg(0x{itemTemplateId:X8}) failed: {ex.Message}");
+                return false;
+            }
+        }
+
         private static HashSet<string> ExtractAllowedEquipmentTypes(List<string> stringDataItems)
         {
             var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

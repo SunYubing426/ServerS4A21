@@ -27,6 +27,9 @@ namespace DfoServer.Game.Inventory
         public const byte KindGuildMedal = 12;
         public const byte KindGuardianGem = 13;
         public const byte KindEpicPiece = 14;
+        public const byte KindThrow = 15;    // 投掷/设置（[throw]/[set]：飞盘、燃烧瓶、爆弹、地雷等）
+        public const byte KindGacha = 16;    // 抽取（[booster selection]/[random reward item] 等抽奖开箱类）
+        public const byte KindMisc = 17;     // 其它（[waste]/[etc]/[dye]/[contract] 等杂项）
 
         public const int ItemKindOffset = 0;
         public const int ItemIdOffset = 1;

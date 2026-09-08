@@ -63,6 +63,7 @@ namespace DfoServer.Network.Builders
                 (ushort)NotiPacketTypeA21.UPGRADE_CARRY_GOLD,
                 s => s.GoldLimitUpgradeLevel));
             Register(new PremiumServiceInitBodyBuilder());
+            Register(new AuctionServiceInitBodyBuilder());
 
             
             Register(new EnterGameWorldCompleteBodyBuilder());

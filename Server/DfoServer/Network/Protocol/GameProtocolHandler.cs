@@ -62,6 +62,7 @@ namespace DfoServer.Network
         private readonly EventOnlineAttendanceHandler _eventOnlineAttendanceHandler;
         private readonly EventGrowSupportHandler _eventGrowSupportHandler;
         private readonly EventBurningTimeHandler _eventBurningTimeHandler;
+        private readonly AuctionHandler _auctionHandler;
         private readonly ExpertJobStoreHandler _expertJobStoreHandler;
         private readonly ExpertJobExtractionHandler _expertJobExtractionHandler;
         private readonly ExpertJobCompoundHandler _expertJobCompoundHandler;
@@ -228,6 +229,7 @@ namespace DfoServer.Network
             _eventOnlineAttendanceHandler = featureHandlers.EventOnlineAttendance;
             _eventGrowSupportHandler = featureHandlers.EventGrowSupport;
             _eventBurningTimeHandler = featureHandlers.EventBurningTime;
+            _auctionHandler = featureHandlers.Auction;
             _pvpChannelInfoHandler = socialHandlers.PvpChannelInfo;
             _pvpRoomHandler = socialHandlers.PvpRoom;
             _characterSessionLifecycle = characterSessionLifecycle;
@@ -265,6 +267,32 @@ namespace DfoServer.Network
             _cmdDispatch.RegisterGroup("friend", RegisterFriendHandlers);
             _cmdDispatch.RegisterGroup("guild", RegisterGuildHandlers);
             _cmdDispatch.RegisterGroup("event-joust", RegisterEventJoustHandlers);
+            _cmdDispatch.RegisterGroup("auction", RegisterAuctionHandlers);
+        }
+
+        private void RegisterAuctionHandlers(GameCommandRegistry.GameCommandRegistrationGroup d)
+        {
+            d[(ushort)CmdPacketTypeA21.AUCTION_ASK_AVERAGE_PRICE] =
+                _auctionHandler.HandleAskAveragePrice;
+            d[(ushort)CmdPacketTypeA21.AUCTION_REGIST_ITEM] =
+                _auctionHandler.HandleRegistItem;
+            d[(ushort)CmdPacketTypeA21.AUCTION_REGIST_CANCEL] =
+                _auctionHandler.HandleRegistCancel;
+            d[(ushort)CmdPacketTypeA21.AUCTION_BIDDING] =
+                _auctionHandler.HandleBidding;
+            d[(ushort)CmdPacketTypeA21.AUCTION_SEARCH_BY_ITEMKEY] =
+                _auctionHandler.HandleSearchByItemKey;
+            d[(ushort)CmdPacketTypeA21.AUCTION_SEARCH_BY_NOITEMKEY] =
+                _auctionHandler.HandleSearchByNoItemKey;
+            d[(ushort)CmdPacketTypeA21.AUCTION_MY_REGISTED_ITEM_INFO] =
+                _auctionHandler.HandleMyRegistedItemInfo;
+            d[(ushort)CmdPacketTypeA21.AUCTION_MY_BIDDING_INFO] =
+                _auctionHandler.HandleMyBiddingInfo;
+            d[(ushort)CmdPacketTypeA21.AUCTION_MY_AUCTION_HISTORY] =
+                _auctionHandler.HandleMyAuctionHistory;
+            d[(ushort)CmdPacketTypeA21.AUCTION_BUY_ITEM_APIECE] =
+                _auctionHandler.HandleBuyItemApiece;
+            d[0x031B] = _auctionHandler.HandleAveragePriceList;
         }
 
         public void Dispose()

@@ -813,6 +813,14 @@ namespace DfoServer.Infrastructure
                 new EventBurningTimeHandler(
                     inventory.BurningTime);
 
+            var auctionService = new Game.Auction.AuctionService(
+                new Game.Auction.AuctionRepository(core.Database),
+                inventory.MailboxService);
+            auctionService.RegisterClock(ClockService.Instance);
+            var auctionHandler = new AuctionHandler(
+                auctionService,
+                inventory.InventoryRefreshSender);
+
             return new GameProtocolFeatureHandlers(
                 lotteryItem,
                 new VendingMachineHandler(
@@ -879,7 +887,8 @@ namespace DfoServer.Infrastructure
                 eventLoginRewardHandler,
                 eventOnlineAttendanceHandler,
                 eventGrowSupportHandler,
-                eventBurningTimeHandler);
+                eventBurningTimeHandler,
+                auctionHandler);
         }
 
         internal CharacterSessionLifecycleCoordinator
