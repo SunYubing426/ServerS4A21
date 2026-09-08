@@ -64,8 +64,8 @@ namespace DfoServer.Network.Builders
             writer.WriteByte(t.CreatureField4);             
             writer.WriteUInt32(t.NameTagItemId); // 名称装饰卡ID
             writer.WriteUInt32(t.NameTagExpireTime); // 名称装饰卡到期时间戳
-            writer.WriteByte(t.Stamina);                    
-            writer.WriteUInt32(t.FatiguePenalty);           
+            writer.WriteByte(t.Stamina);
+            writer.WriteUInt32(t.GuildId);
             writer.WriteByte(t.IsEventCharacter);           
             if (t.EquippedCreatureItemId == 0)
             {
@@ -82,7 +82,13 @@ namespace DfoServer.Network.Builders
             }
 
             // A21 无工会路径使用固定 64B 尾，避免客户端把旧 ProgressB 当作 dstr 长度。
-            writer.WriteBytes(BuildA21AfterAliveNoGuild(t));
+            var afterAlive = BuildA21AfterAliveNoGuild(t);
+            writer.WriteBytes(afterAlive.AsSpan(0, 6).ToArray());
+            writer.WriteDstr(
+                t.GuildId == 0
+                    ? ClientTextEncoding.GetBytes("无")
+                    : t.GuildNameBytes);
+            writer.WriteBytes(afterAlive.AsSpan(12).ToArray());
         }
 
         private static void ApplyOnlineInventoryTailFields(int characterId, UserInfoMinimumTailSnapshot tail)

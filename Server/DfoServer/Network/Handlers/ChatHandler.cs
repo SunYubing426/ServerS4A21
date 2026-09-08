@@ -1,3 +1,4 @@
+using DfoServer.Game.Guilds;
 using DfoServer.Game.Party;
 using DfoServer.Game.Session;
 using System;
@@ -15,6 +16,7 @@ namespace DfoServer.Network.Handlers
         private const byte DirectMessageMode = 1;
         private const byte PartyMessageMode = 2;
         private const byte AreaMessageMode = 3;
+        private const byte GuildMessageMode = 6;
         private const byte AlternateDirectMessageMode = 7;
         private const byte OneToOneConversationMode = 45;
 
@@ -85,7 +87,12 @@ namespace DfoServer.Network.Handlers
                             request.Mode,
                             session.Player.UserId,
                             serverGroup: 0,
-                            request.MessageBytes));
+                            request.Mode == GuildMessageMode
+                                && recipient.SessionId != session.SessionId
+                                ? BuildGuildPrefixedMessage(
+                                    session.Player.Name,
+                                    request.MessageBytes)
+                                : request.MessageBytes));
                 sendTasks.Add(recipient.SendPacketAsync(packet));
             }
 
@@ -158,6 +165,20 @@ namespace DfoServer.Network.Handlers
                              sender.ListenerPort))
                 {
                     AddIfCurrentChannel(result, sender, areaSession);
+                }
+            }
+
+            if (request.Mode == GuildMessageMode)
+            {
+                var guild = GuildSystem.GetGuildOfCharacter(
+                    sender.Player.CharacterId);
+                if (guild != null)
+                {
+                    foreach (var member in guild.Members)
+                    {
+                        if (_sessions.TryGet(member.CharacterId, out var memberSession))
+                            AddIfCurrentChannel(result, sender, memberSession);
+                    }
                 }
             }
 
@@ -405,6 +426,25 @@ namespace DfoServer.Network.Handlers
             => mode == DirectMessageMode
                 || mode == AlternateDirectMessageMode
                 || mode == OneToOneConversationMode;
+
+        private static byte[] BuildGuildPrefixedMessage(
+            byte[] senderNameBytes,
+            byte[] messageBytes)
+        {
+            var name = senderNameBytes ?? Array.Empty<byte>();
+            var separator = Infrastructure.ClientTextEncoding.GetBytes("： ");
+            var message = messageBytes ?? Array.Empty<byte>();
+            var result = new byte[name.Length + separator.Length + message.Length];
+            Buffer.BlockCopy(name, 0, result, 0, name.Length);
+            Buffer.BlockCopy(separator, 0, result, name.Length, separator.Length);
+            Buffer.BlockCopy(
+                message,
+                0,
+                result,
+                name.Length + separator.Length,
+                message.Length);
+            return result;
+        }
 
         private static void AddIfCurrentChannel(
             IDictionary<Guid, EnhancedClientSession> recipients,

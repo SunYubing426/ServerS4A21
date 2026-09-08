@@ -1459,6 +1459,157 @@ CREATE TABLE IF NOT EXISTS event_online_attendance_daily (
 CREATE INDEX IF NOT EXISTS idx_event_online_attendance_daily_day
     ON event_online_attendance_daily(event_id, season_id, day_id);
 
+CREATE TABLE IF NOT EXISTS guilds (
+    guild_id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    memo TEXT NOT NULL DEFAULT '',
+    master_name TEXT NOT NULL,
+    gold INTEGER NOT NULL DEFAULT 0,
+    level INTEGER NOT NULL DEFAULT 1,
+    exp INTEGER NOT NULL DEFAULT 0,
+    member_limit INTEGER NOT NULL DEFAULT 300,
+    announcement TEXT NOT NULL DEFAULT '',
+    emblem_id INTEGER NOT NULL DEFAULT 0,
+    public_flag INTEGER NOT NULL DEFAULT 0,
+    recommend_channel_id INTEGER NOT NULL DEFAULT 0,
+    warehouse_capacity INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS guild_members (
+    guild_id INTEGER NOT NULL,
+    character_id INTEGER NOT NULL,
+    character_name TEXT NOT NULL,
+    is_master INTEGER NOT NULL DEFAULT 0 CHECK(is_master IN (0, 1)),
+    grade INTEGER NOT NULL DEFAULT 4,
+    joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (guild_id, character_id)
+);
+CREATE INDEX IF NOT EXISTS idx_guild_members_character
+    ON guild_members(character_id);
+
+CREATE TABLE IF NOT EXISTS guild_contents (
+    guild_id INTEGER NOT NULL,
+    content_id INTEGER NOT NULL,
+    status INTEGER NOT NULL DEFAULT 1,
+    level INTEGER NOT NULL DEFAULT 1,
+    exp INTEGER NOT NULL DEFAULT 0,
+    expires_at TEXT,
+    bought_at TEXT,
+    PRIMARY KEY (guild_id, content_id)
+);
+
+CREATE TABLE IF NOT EXISTS guild_member_attendance (
+    guild_id INTEGER NOT NULL,
+    character_id INTEGER NOT NULL,
+    attendance_date TEXT NOT NULL,
+    attended_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (guild_id, character_id, attendance_date)
+);
+CREATE INDEX IF NOT EXISTS idx_guild_attendance_guild_date
+    ON guild_member_attendance(guild_id, attendance_date);
+
+CREATE TABLE IF NOT EXISTS guild_coin_claims (
+    character_id INTEGER NOT NULL,
+    claim_key TEXT NOT NULL,
+    source INTEGER NOT NULL,
+    coins INTEGER NOT NULL DEFAULT 0,
+    claimed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (character_id, claim_key)
+);
+
+CREATE TABLE IF NOT EXISTS guild_contribution_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_key TEXT NOT NULL,
+    character_id INTEGER NOT NULL,
+    guild_id INTEGER NOT NULL,
+    month_key INTEGER NOT NULL,
+    source_type INTEGER NOT NULL,
+    points INTEGER NOT NULL DEFAULT 0,
+    occurred_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    character_name TEXT NOT NULL DEFAULT '',
+    donation_gold INTEGER,
+    donation_mileage INTEGER,
+    UNIQUE (character_id, source_key)
+);
+
+CREATE TABLE IF NOT EXISTS guild_member_contributions (
+    guild_id INTEGER NOT NULL,
+    month_key INTEGER NOT NULL,
+    character_id INTEGER NOT NULL,
+    points INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, month_key, character_id)
+);
+
+CREATE TABLE IF NOT EXISTS guild_contribution_periods (
+    guild_id INTEGER NOT NULL,
+    month_key INTEGER NOT NULL,
+    starts_at TEXT NOT NULL,
+    ends_at TEXT NOT NULL,
+    member_goal INTEGER NOT NULL,
+    member_item INTEGER NOT NULL,
+    member_count INTEGER NOT NULL,
+    guild_goal INTEGER NOT NULL,
+    guild_item INTEGER NOT NULL,
+    guild_count INTEGER NOT NULL,
+    points INTEGER NOT NULL DEFAULT 0,
+    settled_at TEXT,
+    PRIMARY KEY (guild_id, month_key)
+);
+
+CREATE TABLE IF NOT EXISTS guild_contribution_rewards (
+    reward_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id INTEGER NOT NULL,
+    month_key INTEGER NOT NULL,
+    reward_kind INTEGER NOT NULL,
+    character_id INTEGER NOT NULL,
+    account_id INTEGER NOT NULL,
+    item_id INTEGER NOT NULL,
+    item_count INTEGER NOT NULL,
+    sender_character_id INTEGER NOT NULL DEFAULT 0,
+    entitled_at TEXT NOT NULL,
+    mailed_at TEXT,
+    UNIQUE (guild_id, month_key, reward_kind, character_id)
+);
+
+CREATE TABLE IF NOT EXISTS guild_grade_config (
+    guild_id INTEGER NOT NULL,
+    grade INTEGER NOT NULL,
+    perm_bitmap INTEGER NOT NULL DEFAULT 0,
+    grade_name TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (guild_id, grade)
+);
+
+CREATE TABLE IF NOT EXISTS guild_applications (
+    application_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id INTEGER NOT NULL,
+    character_id INTEGER NOT NULL,
+    character_name TEXT NOT NULL,
+    message TEXT NOT NULL DEFAULT '',
+    status INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    processed_at TEXT,
+    processed_by INTEGER NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_guild_applications_pending
+    ON guild_applications(guild_id, character_id) WHERE status = 0;
+CREATE INDEX IF NOT EXISTS idx_guild_applications_guild_status
+    ON guild_applications(guild_id, status);
+
+CREATE TABLE IF NOT EXISTS guild_log (
+    log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id INTEGER NOT NULL,
+    log_type INTEGER NOT NULL,
+    actor_cid INTEGER NOT NULL DEFAULT 0,
+    actor_name TEXT NOT NULL DEFAULT '',
+    target_cid INTEGER NOT NULL DEFAULT 0,
+    target_name TEXT NOT NULL DEFAULT '',
+    detail TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_guild_log_guild_time
+    ON guild_log(guild_id, log_id);
+
 -- 服务端协议默认配置，不包含玩家账号或角色数据。
 INSERT OR IGNORE INTO get_userinfo_template (
     id,

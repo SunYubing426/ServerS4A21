@@ -35,6 +35,8 @@ namespace DfoServer.Game.SelectCharacter
         public byte IsPremiumPcRoom { get; set; }            
         public byte ServerGroupId { get; set; }              
         public uint BlackCount { get; set; }                 
+        // Runtime projection from guild_members/guilds; never persisted into legacy subtype fields.
+        public uint GuildId { get; set; }
         public byte GuildLevel { get; set; }                 
         public byte[] GuildNameBytes { get; set; } = new byte[0];
         public uint ChaosPoint { get; set; }                 
