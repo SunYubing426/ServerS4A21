@@ -175,6 +175,14 @@ namespace DfoServer
                 Environment.Exit(RunA21InventoryDatabaseMigration(args, migrateIndex));
                 return;
             }
+
+            // Anton_Awakening 实机测试用 GM 入口（需停服执行）。
+            // 用法：DfoServer.exe --gm-anton-seed <characterId|name> [--gm-anton-mode <...>] [--gm-anton-db <path>]
+            if (Array.IndexOf(args, "--gm-anton-seed") >= 0)
+            {
+                Environment.Exit(Game.Admin.AntonGmSeedCommand.Run(args));
+                return;
+            }
             GameNetworkConfig.Configure(args);
             GameNetworkConfig.ValidateRelayConfiguration();
 
