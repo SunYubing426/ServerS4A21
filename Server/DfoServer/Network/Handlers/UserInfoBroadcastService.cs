@@ -63,6 +63,10 @@ namespace DfoServer.Network.Handlers
 
                 record.Subtype0Tail = subtype0Repository.Load(cid) ?? new UserInfoMinimumTailSnapshot();
                 var accountId = accountIdHint > 0 ? accountIdHint : record.AccountId;
+                Game.Premium.PremiumService.ApplyBlackDiamondToUserInfo(
+                    subtype0Repository.ConnectionString,
+                    accountId,
+                    record.Subtype0Tail);
                 var accountCharacters = honorSummary == null
                     ? characterRepository.ListByAccount(accountId)
                     : null;

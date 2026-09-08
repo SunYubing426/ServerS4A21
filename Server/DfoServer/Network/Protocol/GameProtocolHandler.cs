@@ -31,6 +31,7 @@ namespace DfoServer.Network
             _characterSessionLifecycle;
         private readonly InventoryHandler _inventoryHandler;
         private readonly LotteryItemHandler _lotteryItemHandler;
+        private readonly VendingMachineHandler _vendingMachineHandler;
         private readonly KnightShieldHandler _knightShieldHandler;
         private readonly TownHandler _townHandler;
         private readonly DungeonHandler _dungeonHandler;
@@ -182,6 +183,7 @@ namespace DfoServer.Network
             _knightShieldHandler = characterInventoryHandlers.KnightShield;
             _inventoryHandler = characterInventoryHandlers.Inventory;
             _lotteryItemHandler = featureHandlers.LotteryItem;
+            _vendingMachineHandler = featureHandlers.VendingMachine;
             _petCreatureHandler = featureHandlers.PetCreature;
             // 组队与城镇/副本共享同一个 PartyManager 实例: 跟随退出/副本 fan-out 都要看到同一份队伍状态。
             _partyManager = world.PartyManager;
@@ -450,6 +452,7 @@ namespace DfoServer.Network
             d[0x001A] = _inventoryHandler.Handle_ENUM_CMDPACKET_DISJOINT_ITEM;     //26 系统分解
             d[0x00CA] = _inventoryHandler.Handle_DISJOINT_AVATAR;                  //202 时装分解
             d[0x001B] = _lotteryItemHandler.HandleUseLotteryItem;                 //27
+            d[(ushort)CmdPacketTypeA21.USE_VENDING_MACHINE] = _vendingMachineHandler.HandleUse;
             d[(ushort)CmdPacketType.INCREASE_STATUS] = async (s, h, b) =>
             {
                 var prevLevel = s.Player?.Level;

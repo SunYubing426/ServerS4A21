@@ -34,7 +34,10 @@ namespace DfoServer.Network.Handlers.Dungeon
         private const int SetPlayResultRankPointOffset = 10;
         // 成长之契约经验加成从 PVF premiumlist_new.etc 读取(PremiumEffectProvider)。
         private const float BlackDiamondBonusRate = 0.10f;
-        private static readonly int[] BlackDiamondPremiumTypes = { 1, 17 };
+        private static readonly int[] BlackDiamondPremiumTypes =
+        {
+            PremiumService.BlackDiamondPremiumType,
+        };
 
         internal DungeonSettlementHandler(
             DungeonSharedServices svc,

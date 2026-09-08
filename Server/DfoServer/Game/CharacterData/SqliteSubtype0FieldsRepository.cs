@@ -21,6 +21,8 @@ namespace DfoServer.Game.CharacterData
                 .ConnectionString;
         }
 
+        public string ConnectionString => _connectionString;
+
         public UserInfoMinimumTailSnapshot Load(int characterId)
         {
             using (var conn = new SqliteConnection(_connectionString))

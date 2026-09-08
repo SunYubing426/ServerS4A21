@@ -387,6 +387,10 @@ namespace DfoServer.Network.Handlers
                         if (tail != null && session.Account != null)
                         {
                             _honorLevel.ApplyToSubtype0Tail(tail, session.Account.AccountId, null);
+                            Game.Premium.PremiumService.ApplyBlackDiamondToUserInfo(
+                                _database.ConnectionString,
+                                session.Account.AccountId,
+                                tail);
                         }
                         if (GameNetworkConfig.IsRaidListener(session.ListenerPort))
                         {
@@ -594,6 +598,13 @@ namespace DfoServer.Network.Handlers
             await SendHonorLevelInfoAsync(session, "select-character-ready", characterList.Honor);
             await _growthCapsule.SendExpProgressAsync(
                 session, "select-character-ready", honor: characterList.Honor);
+            if (ownerAcctId > 0)
+            {
+                await Game.Premium.PremiumService.NotifyBlackDiamondStateAsync(
+                    session,
+                    ownerAcctId,
+                    _database);
+            }
         }
 
         public async Task Handle_ENUM_CMDPACKET_GET_USERINFO(EnhancedClientSession session, GamePacketHeader header, byte[] body)
