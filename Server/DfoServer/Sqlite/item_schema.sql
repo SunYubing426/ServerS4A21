@@ -1634,6 +1634,74 @@ CREATE TABLE IF NOT EXISTS guild_log (
 CREATE INDEX IF NOT EXISTS idx_guild_log_guild_time
     ON guild_log(guild_id, log_id);
 
+CREATE TABLE IF NOT EXISTS auction_listings (
+    listing_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    seller_character_id INTEGER NOT NULL,
+    seller_name TEXT NOT NULL DEFAULT '',
+    item_type INTEGER NOT NULL DEFAULT 0,
+    source_list_type INTEGER NOT NULL DEFAULT 0,
+    source_slot_index INTEGER NOT NULL DEFAULT 0,
+    item_template_id INTEGER NOT NULL,
+    item_kind TEXT NOT NULL DEFAULT 'unknown',
+    item_count INTEGER NOT NULL DEFAULT 1,
+    instance_value INTEGER NOT NULL DEFAULT 0,
+    durability INTEGER NOT NULL DEFAULT 0,
+    seal_flag INTEGER NOT NULL DEFAULT 0,
+    option_value INTEGER NOT NULL DEFAULT 0,
+    expire_time INTEGER NOT NULL DEFAULT 0,
+    marker16 INTEGER NOT NULL DEFAULT 0,
+    pet_serial_or_handle INTEGER NOT NULL DEFAULT 0,
+    extra_json TEXT NOT NULL DEFAULT '{}',
+    item_core_data BLOB,
+    detail_json TEXT NOT NULL DEFAULT '',
+    buyout_price INTEGER NOT NULL DEFAULT 0,
+    starting_price INTEGER NOT NULL DEFAULT 0,
+    status INTEGER NOT NULL DEFAULT 0 CHECK (status IN (0, 1, 2, 3, 4)),
+    buyer_character_id INTEGER NOT NULL DEFAULT 0,
+    buyer_name TEXT NOT NULL DEFAULT '',
+    listed_at_unix INTEGER NOT NULL DEFAULT 0,
+    expires_at_unix INTEGER NOT NULL DEFAULT 0,
+    sold_at_unix INTEGER,
+    settle_mail_count INTEGER NOT NULL DEFAULT 0,
+    current_bid INTEGER NOT NULL DEFAULT 0,
+    current_bidder_id INTEGER NOT NULL DEFAULT 0,
+    current_bidder_name TEXT NOT NULL DEFAULT '',
+    bid_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (seller_character_id) REFERENCES characters(character_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_auction_listings_search
+    ON auction_listings(status, item_template_id, buyout_price);
+CREATE INDEX IF NOT EXISTS idx_auction_listings_seller
+    ON auction_listings(seller_character_id, status);
+CREATE INDEX IF NOT EXISTS idx_auction_listings_settle
+    ON auction_listings(status, settle_mail_count);
+CREATE TABLE IF NOT EXISTS auction_bids (
+    bid_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    listing_id INTEGER NOT NULL,
+    bidder_character_id INTEGER NOT NULL,
+    bidder_name TEXT NOT NULL DEFAULT '',
+    bid_amount INTEGER NOT NULL CHECK (bid_amount > 0),
+    status INTEGER NOT NULL DEFAULT 0 CHECK (status IN (0, 1, 2, 3)),
+    refund_mail_sent INTEGER NOT NULL DEFAULT 0,
+    bid_at_unix INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (listing_id) REFERENCES auction_listings(listing_id) ON DELETE CASCADE,
+    FOREIGN KEY (bidder_character_id) REFERENCES characters(character_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_auction_bids_listing
+    ON auction_bids(listing_id, status);
+CREATE INDEX IF NOT EXISTS idx_auction_bids_bidder
+    ON auction_bids(bidder_character_id, status);
+CREATE TABLE IF NOT EXISTS auction_bot_price_adj (
+    item_id INTEGER PRIMARY KEY,
+    multiplier REAL NOT NULL DEFAULT 1.0,
+    sold_count INTEGER NOT NULL DEFAULT 0,
+    recycled_count INTEGER NOT NULL DEFAULT 0,
+    updated_at_unix INTEGER NOT NULL DEFAULT 0
+);
+
 -- 服务端协议默认配置，不包含玩家账号或角色数据。
 INSERT OR IGNORE INTO get_userinfo_template (
     id,
