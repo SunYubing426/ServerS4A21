@@ -49,7 +49,7 @@ namespace DfoServer.Game.Events.Joust
                 transaction,
                 @"
 INSERT OR IGNORE INTO game_event_state(event_id, state)
-VALUES(@eventId, 1);",
+VALUES(@eventId, 0);",
                 ("@eventId", JoustConfig.EventId));
 
             var calendarWindow = GetCalendarWindowUnix();

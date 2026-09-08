@@ -30,7 +30,11 @@ namespace DfoServer.Infrastructure
             EventJoustHandler eventJoust,
             EventPcRoomTimePointHandler eventPcRoomTimePoint,
             EventDailyAttendanceAnytimeHandler eventDailyAttendanceAnytime,
-            EventTotalAttendanceHandler eventTotalAttendance)
+            EventTotalAttendanceHandler eventTotalAttendance,
+            EventLoginRewardHandler eventLoginReward,
+            EventOnlineAttendanceHandler eventOnlineAttendance,
+            EventGrowSupportHandler eventGrowSupport,
+            EventBurningTimeHandler eventBurningTime)
         {
             LotteryItem = lotteryItem
                 ?? throw new ArgumentNullException(nameof(lotteryItem));
@@ -71,6 +75,14 @@ namespace DfoServer.Infrastructure
                     nameof(eventDailyAttendanceAnytime));
             EventTotalAttendance = eventTotalAttendance
                 ?? throw new ArgumentNullException(nameof(eventTotalAttendance));
+            EventLoginReward = eventLoginReward
+                ?? throw new ArgumentNullException(nameof(eventLoginReward));
+            EventOnlineAttendance = eventOnlineAttendance
+                ?? throw new ArgumentNullException(nameof(eventOnlineAttendance));
+            EventGrowSupport = eventGrowSupport
+                ?? throw new ArgumentNullException(nameof(eventGrowSupport));
+            EventBurningTime = eventBurningTime
+                ?? throw new ArgumentNullException(nameof(eventBurningTime));
         }
 
         internal LotteryItemHandler LotteryItem { get; }
@@ -117,5 +129,13 @@ namespace DfoServer.Infrastructure
             EventDailyAttendanceAnytime { get; }
 
         internal EventTotalAttendanceHandler EventTotalAttendance { get; }
+
+        internal EventLoginRewardHandler EventLoginReward { get; }
+
+        internal EventOnlineAttendanceHandler EventOnlineAttendance { get; }
+
+        internal EventGrowSupportHandler EventGrowSupport { get; }
+
+        internal EventBurningTimeHandler EventBurningTime { get; }
     }
 }

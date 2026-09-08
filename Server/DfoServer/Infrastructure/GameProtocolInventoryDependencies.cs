@@ -1,6 +1,10 @@
 using DfoServer.Game.Accounts;
 using DfoServer.Game.CharacterData;
 using DfoServer.Game.Events.DailyAttendanceAnytime;
+using DfoServer.Game.Events.GrowSupport;
+using DfoServer.Game.Events.BurningTime;
+using DfoServer.Game.Events.LoginReward;
+using DfoServer.Game.Events.OnlineAttendance;
 using DfoServer.Game.Events.RecommendedDungeons;
 using DfoServer.Game.Events.TotalAttendance;
 using DfoServer.Game.ExpertJob;
@@ -28,6 +32,10 @@ namespace DfoServer.Infrastructure
             RecommendDungeonClearStatsService recommendDungeonClears,
             DailyAttendanceAnytimeService dailyAttendanceAnytime,
             TotalAttendanceService totalAttendance,
+            LoginRewardService loginReward,
+            OnlineAttendanceService onlineAttendance,
+            GrowSupportService growSupport,
+            BurningTimeService burningTime,
             MailboxInventoryOverflowRewardSink overflowRewardSink)
         {
             InventoryRefreshSender = inventoryRefreshSender
@@ -58,6 +66,14 @@ namespace DfoServer.Infrastructure
                     nameof(dailyAttendanceAnytime));
             TotalAttendance = totalAttendance
                 ?? throw new ArgumentNullException(nameof(totalAttendance));
+            LoginReward = loginReward
+                ?? throw new ArgumentNullException(nameof(loginReward));
+            OnlineAttendance = onlineAttendance
+                ?? throw new ArgumentNullException(nameof(onlineAttendance));
+            GrowSupport = growSupport
+                ?? throw new ArgumentNullException(nameof(growSupport));
+            BurningTime = burningTime
+                ?? throw new ArgumentNullException(nameof(burningTime));
             OverflowRewardSink = overflowRewardSink
                 ?? throw new ArgumentNullException(nameof(overflowRewardSink));
         }
@@ -87,6 +103,14 @@ namespace DfoServer.Infrastructure
         internal DailyAttendanceAnytimeService DailyAttendanceAnytime { get; }
 
         internal TotalAttendanceService TotalAttendance { get; }
+
+        internal LoginRewardService LoginReward { get; }
+
+        internal OnlineAttendanceService OnlineAttendance { get; }
+
+        internal GrowSupportService GrowSupport { get; }
+
+        internal BurningTimeService BurningTime { get; }
 
         internal MailboxInventoryOverflowRewardSink OverflowRewardSink { get; }
     }

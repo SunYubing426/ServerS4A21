@@ -3957,6 +3957,17 @@ namespace DfoServer.Network.Handlers.Dungeon
                 return false;
             }
 
+            var growSupportCharacterId = session.Player.CharacterId;
+            var growSupportAccountId = session.Account?.AccountId ?? 0;
+            if (_svc.GrowSupport != null
+                && growSupportCharacterId > 0
+                && growSupportAccountId > 0)
+            {
+                _svc.GrowSupport.OnDungeonCleared(
+                    growSupportAccountId,
+                    growSupportCharacterId);
+            }
+
             if (!DungeonData.IsSuitableLevelDungeon(run.DungeonId, clearLevel))
                 return true;
 

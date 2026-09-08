@@ -1405,6 +1405,60 @@ CREATE TABLE IF NOT EXISTS event_total_attendance_weekly (
 CREATE INDEX IF NOT EXISTS idx_event_total_attendance_weekly_week
     ON event_total_attendance_weekly(event_id, season_id, week_id);
 
+CREATE TABLE IF NOT EXISTS event_login_reward_account (
+    account_id INTEGER NOT NULL,
+    event_id INTEGER NOT NULL,
+    season_id INTEGER NOT NULL DEFAULT 1,
+    last_claim_day_id INTEGER NOT NULL DEFAULT 0,
+    claimed_mask INTEGER NOT NULL DEFAULT 0,
+    updated_at_unix INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (account_id, event_id, season_id),
+    FOREIGN KEY (account_id) REFERENCES accounts(account_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS event_grow_support_character (
+    account_id INTEGER NOT NULL,
+    character_id INTEGER NOT NULL,
+    event_id INTEGER NOT NULL,
+    season_id INTEGER NOT NULL DEFAULT 1,
+    level_reward_claim_mask INTEGER NOT NULL DEFAULT 0,
+    dungeon_clear_count INTEGER NOT NULL DEFAULT 0
+        CHECK(dungeon_clear_count >= 0),
+    dungeon_reward_claim_mask INTEGER NOT NULL DEFAULT 0,
+    updated_at_unix INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (account_id, character_id, event_id, season_id),
+    FOREIGN KEY (account_id) REFERENCES accounts(account_id) ON DELETE CASCADE,
+    FOREIGN KEY (character_id) REFERENCES characters(character_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS event_online_attendance_account (
+    account_id INTEGER NOT NULL,
+    event_id INTEGER NOT NULL,
+    season_id INTEGER NOT NULL DEFAULT 1,
+    sum_completed_count INTEGER NOT NULL DEFAULT 0
+        CHECK(sum_completed_count >= 0),
+    sum_claim_mask INTEGER NOT NULL DEFAULT 0,
+    updated_at_unix INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (account_id, event_id, season_id),
+    FOREIGN KEY (account_id) REFERENCES accounts(account_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS event_online_attendance_daily (
+    account_id INTEGER NOT NULL,
+    event_id INTEGER NOT NULL,
+    season_id INTEGER NOT NULL DEFAULT 1,
+    day_id INTEGER NOT NULL,
+    online_seconds INTEGER NOT NULL DEFAULT 0
+        CHECK(online_seconds >= 0),
+    time_claim_mask INTEGER NOT NULL DEFAULT 0,
+    updated_at_unix INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (account_id, event_id, season_id, day_id),
+    FOREIGN KEY (account_id) REFERENCES accounts(account_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_online_attendance_daily_day
+    ON event_online_attendance_daily(event_id, season_id, day_id);
+
 -- 服务端协议默认配置，不包含玩家账号或角色数据。
 INSERT OR IGNORE INTO get_userinfo_template (
     id,

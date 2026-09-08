@@ -1,0 +1,138 @@
+{
+  "events": [
+    {
+      "eventId": 228,
+      "state": 0,
+      "details": {
+        "unknown0": 0,
+        "startNotice": "活动 - 正在进行[累计在线得好礼八周年]活动！",
+        "endNotice": "活动 - [累计在线得好礼八周年]活动已结束！",
+        "detailFlag": 1,
+        "flagA": 0,
+        "flagB": 5,
+        "title": "累计在线得好礼八周年",
+        "shortName": "累计在线得好礼八周年",
+        "reservedOrIcon": "",
+        "startUnixTime": 1767196800,
+        "endUnixTime": 1798732799,
+        "linkKey": "",
+        "description": "累计在线得好礼八周年",
+        "detailEnabled": true,
+        "sortOrder": 1
+      }
+    },
+    {
+      "eventId": 2037,
+      "state": 0,
+      "details": {
+        "unknown0": 0,
+        "startNotice": "[S4A21]",
+        "endNotice": "[S4A21]",
+        "detailFlag": 0,
+        "flagA": 0,
+        "flagB": 0,
+        "title": "",
+        "shortName": "",
+        "reservedOrIcon": "",
+        "startUnixTime": 0,
+        "endUnixTime": 0,
+        "linkKey": "",
+        "description": "",
+        "detailEnabled": false,
+        "sortOrder": 0
+      }
+    },
+    {
+      "eventId": 2208,
+      "state": 0,
+      "details": {
+        "unknown0": 0,
+        "startNotice": "活动 - 正在进行[勇者之梦签到]活动！",
+        "endNotice": "活动 - [勇者之梦签到]活动已结束！",
+        "detailFlag": 1,
+        "flagA": 0,
+        "flagB": 5,
+        "title": "勇者之梦签到",
+        "shortName": "勇者之梦签到",
+        "reservedOrIcon": "",
+        "startUnixTime": 1767196800,
+        "endUnixTime": 1798732799,
+        "linkKey": "",
+        "description": "[勇者之梦签到]每周（满7日）通过推荐地下城，即可签到获得奖励。活动开放时间：不定期。",
+        "detailEnabled": true,
+        "sortOrder": 22
+      },
+      "extra": {
+        "param0": 4,
+        "param1": 12,
+        "param2": 0,
+        "param3": 0,
+        "param4": 0,
+        "param5": 0,
+        "param6": 0,
+        "param7": 0,
+        "param8": 0,
+        "param9": 0,
+        "param10": 0,
+        "param11": 0,
+        "sortOrder": 22
+      }
+    },
+    {
+      "eventId": 2365,
+      "state": 0
+    },
+    {
+      "eventId": 2366,
+      "state": 0
+    },
+    {
+      "eventId": 2370,
+      "state": 0,
+      "details": {
+        "unknown0": 0,
+        "startNotice": "活动 - 正在进行[每日签到]活动！",
+        "endNotice": "活动 - [每日签到]活动已结束！",
+        "detailFlag": 1,
+        "flagA": 0,
+        "flagB": 5,
+        "title": "每日签到",
+        "shortName": "每日签到",
+        "reservedOrIcon": "",
+        "startUnixTime": 1767196800,
+        "endUnixTime": 1798732799,
+        "linkKey": "",
+        "description": "[每日签到]",
+        "detailEnabled": true,
+        "sortOrder": 21
+      },
+      "extra": {
+        "param0": 2,
+        "param1": 0,
+        "param2": 0,
+        "param3": 0,
+        "param4": 0,
+        "param5": 0,
+        "param6": 0,
+        "param7": 0,
+        "param8": 0,
+        "param9": 0,
+        "param10": 0,
+        "param11": 0,
+        "sortOrder": 21
+      }
+    },
+    {
+      "eventId": 2380,
+      "state": 0
+    },
+    {
+      "eventId": 2381,
+      "state": 0
+    },
+    {
+      "eventId": 2382,
+      "state": 0
+    }
+  ]
+}

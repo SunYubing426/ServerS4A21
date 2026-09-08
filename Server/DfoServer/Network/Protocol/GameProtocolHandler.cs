@@ -57,6 +57,10 @@ namespace DfoServer.Network
         private readonly EventDailyAttendanceAnytimeHandler
             _eventDailyAttendanceAnytimeHandler;
         private readonly EventTotalAttendanceHandler _eventTotalAttendanceHandler;
+        private readonly EventLoginRewardHandler _eventLoginRewardHandler;
+        private readonly EventOnlineAttendanceHandler _eventOnlineAttendanceHandler;
+        private readonly EventGrowSupportHandler _eventGrowSupportHandler;
+        private readonly EventBurningTimeHandler _eventBurningTimeHandler;
         private readonly ExpertJobStoreHandler _expertJobStoreHandler;
         private readonly ExpertJobExtractionHandler _expertJobExtractionHandler;
         private readonly ExpertJobCompoundHandler _expertJobCompoundHandler;
@@ -219,6 +223,10 @@ namespace DfoServer.Network
             _eventDailyAttendanceAnytimeHandler =
                 featureHandlers.EventDailyAttendanceAnytime;
             _eventTotalAttendanceHandler = featureHandlers.EventTotalAttendance;
+            _eventLoginRewardHandler = featureHandlers.EventLoginReward;
+            _eventOnlineAttendanceHandler = featureHandlers.EventOnlineAttendance;
+            _eventGrowSupportHandler = featureHandlers.EventGrowSupport;
+            _eventBurningTimeHandler = featureHandlers.EventBurningTime;
             _pvpChannelInfoHandler = socialHandlers.PvpChannelInfo;
             _pvpRoomHandler = socialHandlers.PvpRoom;
             _characterSessionLifecycle = characterSessionLifecycle;
@@ -746,6 +754,14 @@ namespace DfoServer.Network
                 _eventDailyAttendanceAnytimeHandler.HandleClaimAsync;
             d[(ushort)CmdPacketTypeA21.EVENT_TOTAL_ATTENDANCE_CHECK_THISWEEK] =
                 _eventTotalAttendanceHandler.HandleCheckThisWeekAsync;
+            d[(ushort)CmdPacketTypeA21.USER_ATTENDANCE_EVENT_CHECK] =
+                _eventLoginRewardHandler.HandleClaimAsync;
+            d[(ushort)CmdPacketTypeA21.ONTIME_EVENT_REQUEST_REWARD] =
+                _eventOnlineAttendanceHandler.HandleAsync;
+            d[(ushort)CmdPacketTypeA21.LEVEL_UP_EVENT_REWARD] =
+                _eventGrowSupportHandler.HandleLevelUpRewardAsync;
+            d[(ushort)CmdPacketTypeA21.PROPER_DUNGEON_CLEAR_CHARAC_REWARD] =
+                _eventGrowSupportHandler.HandleDungeonClearRewardAsync;
             d[(ushort)CmdPacketType.PARTY_TELEPORT] =
                 _townHandler.Handle_ENUM_CMDPACKET_PARTY_TELEPORT;
         }
