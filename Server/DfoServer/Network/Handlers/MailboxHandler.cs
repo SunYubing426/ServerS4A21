@@ -28,7 +28,9 @@ namespace DfoServer.Network.Handlers
         private const int MailboxLetterTextSize = 512;
         private const int MinExpirationUnixTime = 1000000000;
         private const int OfficialMailSenderCharacterId = 0;
-        private const string OfficialMailSenderName = "DNFadmin";
+        // A21 renders its own official-mail label in the client. Supplying
+        // another name here causes duplicated sender text in the mailbox UI.
+        private const string OfficialMailSenderName = "";
         private const string DefaultMailboxSafetyText = "DNF\u8FD0\u8425\u8005\u4E0D\u4F1A\u4EE5\u4EFB\u4F55\u5F62\u5F0F\u7D22\u8981\u6216\u8BE2\u95EE\u60A8\u7684\u8D26\u53F7\u5BC6\u7801,\u8BF7\u60A8\u4E0D\u8981\u90AE\u5BC4\u5199\u6709DNF\u8D26\u53F7\u5BC6\u7801\u7B49\u91CD\u8981\u4FE1\u606F\u7684\u4FE1\u4EF6";
         private const bool MailboxSummaryAttachmentPreviewEnabled = true;
         private const int QueryCharacterInfoNameSize = 20;

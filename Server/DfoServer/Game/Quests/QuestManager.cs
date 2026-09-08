@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using DfoServer.Game.Accounts;
 using DfoServer.Game.Characters;
@@ -8,6 +9,8 @@ using DfoServer.Game.CharacterData;
 using DfoServer.Game.Dungeon;
 using DfoServer.Game.ExpertJob;
 using DfoServer.Game.Inventory;
+using DfoServer.Game.Mailbox;
+using DfoServer.Game.Progression;
 using DfoServer.Game.SelectCharacter;
 using DfoServer.Game.Session;
 using DfoServer.Infrastructure;
@@ -31,6 +34,7 @@ namespace DfoServer.Game.Quests
             _imageCommunicationService;
         private readonly QuestNotifySelectionService _notifySelectionService;
         private readonly QuestNotificationProjector _notifications;
+        private readonly MailboxService _levelUpRewardMailbox;
         private readonly TimeSpan _serverTriggerEchoGrace;
         private readonly ClockService _clock;
         private readonly object _serverTriggerProjectionSync = new object();
@@ -99,6 +103,8 @@ namespace DfoServer.Game.Quests
                 : DefaultServerTriggerEchoGrace;
             _clock = clock ?? throw new ArgumentNullException(nameof(clock));
             _service = new QuestService(_connStr);
+            _levelUpRewardMailbox = new MailboxService(
+                new MailboxRepository(database));
             _dailyChallengeService = new DailyChallengeService(_connStr);
             _imageCommunicationService =
                 new ImageCommunicationApplicationService(_connStr);
@@ -328,6 +334,7 @@ namespace DfoServer.Game.Quests
             var qBody = StripEcho(body);
             int cid = _sender.CharacterId;
             if (cid <= 0) return;
+            var previousLevel = _sender.Player?.Level ?? 0;
             InventoryContext.TryGetOwnedLease(sessionId, cid, out var lease);
             var owner = new QuestCommandOwnerContext(
                 cid,
@@ -338,6 +345,19 @@ namespace DfoServer.Game.Quests
             var result = QuestCommandParser.TryParseFinish(qBody, out var command)
                 ? _service.HandleFinishQuest(owner, command)
                 : QuestFinishResult.Fail(22);
+            if (result.Success)
+            {
+                var deliveredRewards = CharacterLevelUpRewardService.Deliver(
+                    _levelUpRewardMailbox,
+                    cid,
+                    _sender.AccountId,
+                    Encoding.UTF8.GetString(_sender.Player?.Name ?? Array.Empty<byte>()),
+                    previousLevel,
+                    result.NewLevel);
+                await CharacterLevelUpRewardNotificationSender.SendAsync(
+                    _sender,
+                    deliveredRewards);
+            }
             await _notifications.SendPreFinishAckNotificationsAsync(cid, result);
             await _sender.SendCmdAckAsync(wireType, QuestAckBuilder.BuildFinish(result));
             await _notifications.ProjectFinishedQuestAsync(cid, result);

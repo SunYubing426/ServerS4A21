@@ -1,4 +1,6 @@
 using DfoServer.Game.Inventory;
+using DfoServer.Game.Progression;
+using DfoServer.Infrastructure;
 using DfoServer.Game.Quests;
 using DfoServer.Game.ReviveCoin;
 using DfoServer.Network.Builders;
@@ -78,6 +80,16 @@ namespace DfoServer.Network.Handlers
                 {
                     session.Player.Level = result.NewLevel;
                     session.Player.Exp = result.NewExp;
+                    var deliveredRewards = CharacterLevelUpRewardService.Deliver(
+                        _mailboxService,
+                        characterId,
+                        accountId,
+                        ClientTextEncoding.GetString(session.Player.Name ?? Array.Empty<byte>()),
+                        result.PreviousLevel,
+                        result.NewLevel);
+                    await CharacterLevelUpRewardNotificationSender.SendAsync(
+                        session,
+                        deliveredRewards);
                 }
             }
 
@@ -217,6 +229,16 @@ namespace DfoServer.Network.Handlers
 
             session.Player.Level = result.NewLevel;
             session.Player.Exp = result.NewExp;
+            var deliveredRewards = CharacterLevelUpRewardService.Deliver(
+                _mailboxService,
+                characterId,
+                accountId,
+                ClientTextEncoding.GetString(session.Player.Name ?? Array.Empty<byte>()),
+                result.PreviousLevel,
+                result.NewLevel);
+            await CharacterLevelUpRewardNotificationSender.SendAsync(
+                session,
+                deliveredRewards);
 
             await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
                 0x01,
@@ -250,6 +272,7 @@ namespace DfoServer.Network.Handlers
                 0x01,
                 (ushort)CmdPacketType.INCREASE_STATUS,
                 IncreaseStatusAckBuilder.BuildError(errorCode)));
+
 
         private static Task SendLevelUpTicketFailureAsync(
             EnhancedClientSession session,

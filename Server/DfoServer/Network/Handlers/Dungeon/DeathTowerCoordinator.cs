@@ -1,10 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using DfoServer.Game.Accounts;
 using DfoServer.Game.DeathTower;
 using DfoServer.Game.Inventory;
+using DfoServer.Game.Mailbox;
+using DfoServer.Game.Progression;
 using DfoServer.Game.Session;
 using DfoServer.Network;
 using DfoServer.Network.Builders;
@@ -25,6 +28,7 @@ namespace DfoServer.Network.Handlers.Dungeon
         private readonly GameDungeon.DungeonInstanceRegistry _instanceRegistry;
         private readonly DungeonTownReturnCoordinator _townReturn;
         private readonly ISessionDirectory _sessionDirectory;
+        private readonly MailboxService _levelUpRewardMailbox;
         private readonly DeathTowerTransientInventoryService _transientInventory =
             new DeathTowerTransientInventoryService();
 
@@ -51,7 +55,8 @@ namespace DfoServer.Network.Handlers.Dungeon
             InventoryRefreshSender inventoryRefresh = null,
             GameDungeon.DungeonInstanceRegistry instanceRegistry = null,
             DungeonTownReturnCoordinator townReturn = null,
-            ISessionDirectory sessionDirectory = null)
+            ISessionDirectory sessionDirectory = null,
+            MailboxService levelUpRewardMailbox = null)
         {
             _sendExpGrantNotification = sendExpGrantNotification;
             _sendInDungeonLevelUpFollowups = sendInDungeonLevelUpFollowups;
@@ -59,6 +64,7 @@ namespace DfoServer.Network.Handlers.Dungeon
             _instanceRegistry = instanceRegistry;
             _townReturn = townReturn;
             _sessionDirectory = sessionDirectory;
+            _levelUpRewardMailbox = levelUpRewardMailbox;
             if (!string.IsNullOrWhiteSpace(connectionString))
                 _settlementService = new DeathTowerSettlementService(
                     connectionString,
@@ -859,6 +865,15 @@ namespace DfoServer.Network.Handlers.Dungeon
             {
                 session.Player.Level = grant.NewLevel;
                 session.Player.Exp = grant.NewExp;
+                var deliveredRewards = CharacterLevelUpRewardService.Deliver(
+                    _levelUpRewardMailbox,
+                    session.Player.CharacterId,
+                    session.Account?.AccountId ?? 0,
+                    Encoding.UTF8.GetString(session.Player.Name ?? Array.Empty<byte>()),
+                    grant);
+                await CharacterLevelUpRewardNotificationSender.SendAsync(
+                    session,
+                    deliveredRewards);
             }
 
             if (!runtime.ExperienceProjectionSent)

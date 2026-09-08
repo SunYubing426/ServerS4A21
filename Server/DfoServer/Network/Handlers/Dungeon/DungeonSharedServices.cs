@@ -7,6 +7,7 @@ using DfoServer.Game.Events.RecommendedDungeons;
 using DfoServer.Game.Events.TotalAttendance;
 using DfoServer.Game.Inventory;
 using DfoServer.Game.Mercenary;
+using DfoServer.Game.Mailbox;
 using DfoServer.Game.Progression;
 using DfoServer.Game.SelectCharacter;
 using DfoServer.GameWorld;
@@ -47,6 +48,7 @@ namespace DfoServer.Network.Handlers.Dungeon
         internal AccountExperienceProgressService AccountExperience { get; }
         internal GrowthCapsuleSyncService GrowthCapsuleSync { get; }
         internal CharacterExperienceService CharacterExperience { get; }
+        internal MailboxService Mailbox { get; }
         internal Game.Dungeon.TowerOfDespairProgressService TowerOfDespairProgress { get; }
         internal Game.Party.PartyManager PartyManager { get; }
         internal Game.Raid.RaidManager RaidManager { get; }
@@ -149,6 +151,7 @@ namespace DfoServer.Network.Handlers.Dungeon
             CharacterExperience = new CharacterExperienceService(
                 AccountExperience,
                 Database);
+            Mailbox = new MailboxService(new MailboxRepository(Database));
             ProgressNotifications = new DungeonProgressNotificationProjector(
                 ConnectionString,
                 CharacterRepository,
@@ -201,7 +204,8 @@ namespace DfoServer.Network.Handlers.Dungeon
                 inventoryRefresh: inventoryRefresh,
                 instanceRegistry: InstanceRegistry,
                 townReturn: TownReturn,
-                sessionDirectory: Sessions);
+                sessionDirectory: Sessions,
+                levelUpRewardMailbox: Mailbox);
             TowerOfDespairProgress =
                 new Game.Dungeon.TowerOfDespairProgressService(
                     new Game.Dungeon.TowerOfDespairProgressRepository(

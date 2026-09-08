@@ -1,16 +1,17 @@
 using DfoServer.Game.Appearance;
 using DfoServer.Game.Characters;
 using DfoServer.Game.Inventory;
-using DfoServer.Game.Mailbox;
 using DfoServer.Game.ExpertJob;
 using DfoServer.Game.KnightShield;
 using DfoServer.Game.Mercenary;
+using DfoServer.Game.Mailbox;
 using DfoServer.Game.SelectCharacter;
 using DfoServer.Network.Builders;
 using DfoServer.Infrastructure;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 
 namespace DfoServer.Network.Handlers

@@ -5,6 +5,7 @@ using DfoServer.Game.Progression;
 using DfoServer.Infrastructure;
 using DfoServer.Network.Builders;
 using System;
+using System.Text;
 using System.Threading.Tasks;
 
 namespace DfoServer.Network.Handlers.Dungeon
@@ -649,6 +650,15 @@ namespace DfoServer.Network.Handlers.Dungeon
             // Grant(OnAnyChange) and the delivery checkpoint are already
             // committed. A transport failure must not make EXP grantable
             // again; rejoin projects the authoritative character state.
+            var deliveredRewards = CharacterLevelUpRewardService.Deliver(
+                _services.Mailbox,
+                session.Player.CharacterId,
+                session.Account?.AccountId ?? 0,
+                Encoding.UTF8.GetString(session.Player.Name ?? Array.Empty<byte>()),
+                grant);
+            await CharacterLevelUpRewardNotificationSender.SendAsync(
+                session,
+                deliveredRewards);
             await _services.ProgressNotifications
                 .SendExpGrantNotificationAsync(
                     session,
