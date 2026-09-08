@@ -49,6 +49,11 @@ namespace DfoServer.Sqlite
                 new MigrationStep(24, "add_license_dungeon_period_state", ApplyLicenseDungeonPeriodState),
                 new MigrationStep(25, "add_license_dungeon_progress", ApplyLicenseDungeonProgress),
                 new MigrationStep(26, "add_license_dungeon_unlock_conditions", ApplyLicenseDungeonUnlockConditions),
+                // 27: 旧库只跑过 v26 的 schema 升级,不会触发 item_schema.sql 里的
+                // dungeon_limit_config 243-247 种子 INSERT,导致 limit 校验走
+                // AllowUnlimited 兜底、客户端不受次数限制。补一份幂等 INSERT 让
+                // 升级用户也能拿到 Anton_Awakening 的 limit 配置。
+                new MigrationStep(27, "seed_anton_awakening_dungeon_limits", ApplySeedAntonAwakeningDungeonLimits),
             };
 
         internal static int CurrentVersion =>
@@ -473,6 +478,25 @@ CREATE TABLE IF NOT EXISTS character_license_dungeon_progress (
                 "character_license_dungeon_progress",
                 "no_revive_clear_count",
                 "INTEGER NOT NULL DEFAULT 0 CHECK (no_revive_clear_count >= 0)");
+        }
+
+        // 补齐 Anton_Awakening (243-247) 的 dungeon_limit_config 种子。
+        // item_schema.sql 里同名 INSERT 仅在新建库时执行;存量库升级到本分支
+        // 时 schema_version 已经等于 26,不会重跑 schema,因此通过 v27 migration
+        // 显式补一次。INSERT OR IGNORE 保证幂等。
+        private static void ApplySeedAntonAwakeningDungeonLimits(
+            SqliteConnection connection,
+            SqliteTransaction transaction)
+        {
+            ExecuteSql(connection, transaction, @"
+INSERT OR IGNORE INTO dungeon_limit_config
+    (dgn_id, scope_type, limit_count, enabled, sort_order)
+VALUES
+    (243, 'charac', 1, 1, 100),
+    (244, 'charac', 1, 1, 101),
+    (245, 'charac', 1, 1, 102),
+    (246, 'charac', 1, 1, 103),
+    (247, 'charac', 1, 1, 104);");
         }
 
         private static int ConvertCharacterNames(
