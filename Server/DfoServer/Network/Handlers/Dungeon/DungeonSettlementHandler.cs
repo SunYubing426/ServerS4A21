@@ -2620,6 +2620,19 @@ namespace DfoServer.Network.Handlers.Dungeon
                     }
                 }
 
+                await ExecuteClearEffectAsync(
+                    session,
+                    run,
+                    identity,
+                    clearFact,
+                    "guild-mileage-clear",
+                    () =>
+                    {
+                        AwardGuildMileageBestEffort(session, run);
+                        AwardGuildContributionBestEffort(session, run, clearFact);
+                        return Task.CompletedTask;
+                    });
+
                 if (!await PrepareSettlementFromClearAsync(
                         session,
                         run,
@@ -2923,6 +2936,76 @@ namespace DfoServer.Network.Handlers.Dungeon
             {
                 run.Effects.TryFail(reservation);
                 throw;
+            }
+        }
+
+        private static void AwardGuildMileageBestEffort(
+            EnhancedClientSession session, DungeonRun run)
+        {
+            try
+            {
+                var characterId = session?.Player?.CharacterId ?? 0;
+                if (characterId <= 0)
+                    return;
+                var total = DfoServer.Game.Guilds.GuildSystem.AddGuildMileage(
+                    characterId,
+                    DfoServer.Game.Guilds.GuildSystem.MileagePerDungeonClear,
+                    run?.DungeonId ?? 0);
+                if (total >= 0)
+                {
+                    FileLogger.Log(
+                        $"[DungeonHandler] GUILD_MILEAGE cid={characterId} " +
+                        $"dungeon={run?.DungeonId ?? 0} " +
+                        $"+{DfoServer.Game.Guilds.GuildSystem.MileagePerDungeonClear} -> {total}");
+                }
+            }
+            catch (Exception ex)
+            {
+                FileLogger.Log($"[DungeonHandler] GUILD_MILEAGE ERROR: {ex.Message}");
+            }
+        }
+
+        private void AwardGuildContributionBestEffort(
+            EnhancedClientSession session, DungeonRun run, DungeonClearedFact clearFact)
+        {
+            try
+            {
+                var characterId = session?.Player?.CharacterId ?? 0;
+                if (characterId <= 0 || clearFact == null)
+                    return;
+                var guild = DfoServer.Game.Guilds.GuildSystem.GetGuildOfCharacter(characterId);
+                if (guild == null)
+                    return;
+                var sameGuildParty = false;
+                var party = _svc.PartyManager?.GetPartyByUser(session.Player.UserId);
+                if (party != null)
+                {
+                    foreach (var member in party.Members)
+                    {
+                        if (member.CharacterId == characterId)
+                            continue;
+                        var memberGuild =
+                            DfoServer.Game.Guilds.GuildSystem.GetGuildOfCharacter(member.CharacterId);
+                        if (memberGuild != null && memberGuild.GuildId == guild.GuildId)
+                        {
+                            sameGuildParty = true;
+                            break;
+                        }
+                    }
+                }
+                DfoServer.Game.Guilds.GuildContributionService.RecordClearContribution(
+                    characterId,
+                    session.Player.UserId,
+                    DfoServer.Infrastructure.ClientTextEncoding.GetString(
+                        session.Player.Name ?? Array.Empty<byte>()),
+                    clearFact.SourceEventId,
+                    sameGuildParty,
+                    run.DungeonId,
+                    session.Player.Level);
+            }
+            catch (Exception ex)
+            {
+                FileLogger.Log($"[DungeonHandler] GUILD_CONTRIBUTION ERROR: {ex.Message}");
             }
         }
 

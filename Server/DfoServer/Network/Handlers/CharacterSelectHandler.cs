@@ -3,6 +3,7 @@ using DfoServer.Game.Appearance;
 using DfoServer.Game.DailyReset;
 using DfoServer.Game.Characters;
 using DfoServer.Game.Friends;
+using DfoServer.Game.Guilds;
 using DfoServer.Game.Inventory;
 using DfoServer.Game.KnightShield;
 using DfoServer.Game.Mercenary;
@@ -598,6 +599,17 @@ namespace DfoServer.Network.Handlers
             await SendHonorLevelInfoAsync(session, "select-character-ready", characterList.Honor);
             await _growthCapsule.SendExpProgressAsync(
                 session, "select-character-ready", honor: characterList.Honor);
+
+            var guild = GuildSystem.GetGuildOfCharacter(ownerCharId);
+            if (guild != null)
+            {
+                await GuildHandler.SendGuildInfoAsync(session, guild);
+                GuildActivityService.RecordAttendance(ownerCharId);
+                GuildActivityService.AwardDailyLoginCoins(
+                    ownerCharId, session.Player?.UserId ?? 0);
+                GuildContributionService.SettleOverduePeriods();
+                _ = GuildHandler.BroadcastMemberListRefreshAsync(ownerCharId);
+            }
             if (ownerAcctId > 0)
             {
                 await Game.Premium.PremiumService.NotifyBlackDiamondStateAsync(

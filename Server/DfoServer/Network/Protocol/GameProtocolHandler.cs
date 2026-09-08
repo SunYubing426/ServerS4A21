@@ -4,6 +4,7 @@ using DfoServer.Game.Characters;
 using DfoServer.Game.Dungeon;
 using DfoServer.Game.ExpertJob;
 using DfoServer.Game.Friends;
+using DfoServer.Game.Guilds;
 using DfoServer.Game.Inventory;
 using DfoServer.Game.KnightShield;
 using DfoServer.Game.Lottery;
@@ -262,6 +263,7 @@ namespace DfoServer.Network
                 "shop-coin-event",
                 d => d[0x00CF] = _shopCoinEventHandler.HandleShopCoinEvent);
             _cmdDispatch.RegisterGroup("friend", RegisterFriendHandlers);
+            _cmdDispatch.RegisterGroup("guild", RegisterGuildHandlers);
             _cmdDispatch.RegisterGroup("event-joust", RegisterEventJoustHandlers);
         }
 
@@ -346,6 +348,63 @@ namespace DfoServer.Network
             d[0x0009] = _staminaHandler.Handle_ENUM_CMDPACKET_RECOVER_STAMINA;
             d[0x02B5] = _characterSelectHandler.Handle_ENUM_CMDPACKET_CHECK_DOUBLE_CHARACTER_NAME;
             d[0x0127] = _characterSelectHandler.Handle_CHANGE_CHARAC_SLOT;
+        }
+
+        private void RegisterGuildHandlers(GameCommandRegistry.GameCommandRegistrationGroup d)
+        {
+            GuildHandler.BindSessions(_worldDependencies.Sessions);
+            d[0x009C] = GuildHandler.Handle_CHECK_GUILD_NAME_DOUBLE;
+            d[0x02E4] = GuildHandler.Handle_REQUEST_GUILD_CREATE_PERMIT;
+            d[0x009E] = GuildHandler.Handle_OPEN_GUILD_CREATE_WINDOW;
+            d[0x02E5] = GuildHandler.Handle_REPLY_GUILD_CREATE_PERMIT;
+            d[0x02E6] = GuildHandler.Handle_CANCEL_GUILD_CREATE;
+            d[0x02E7] = GuildHandler.Handle_REQ_GUILD_INFO_OF_MY_CHARS;
+            d[0x02E8] = GuildHandler.Handle_REQ_GUILD_SERCH_FOR_JOIN;
+            d[0x02F9] = GuildHandler.Handle_REQ_RECOMMEND_GUILD;
+            d[0x016D] = GuildHandler.Handle_JOIN_GUILD_INFO;
+            d[0x02E2] = GuildHandler.Handle_CHECK_GUILD_CREATE_PROMOTE_MSG;
+            d[0x02E3] = GuildHandler.Handle_MODIFY_GUILD_PROMOTE_MSG;
+            d[0x0044] = GuildHandler.Handle_CALL_GUILD_CREATE_RIGHT;
+            d[0x0043] = GuildHandler.Handle_GUILD_MEMBER_LIST;
+            d[0x02F4] = GuildHandler.Handle_GUILD_ALLY_LIST_02F4;
+            d[0x02FB] = GuildHandler.Handle_GUILD_ALLY_LIST_02FB;
+            d[0x02E9] = GuildHandler.Handle_TODAY_GUILD_ATTENDANCE_DETAIL_02E9;
+            d[0x02EA] = GuildHandler.Handle_REQ_GUILD_MILEAGE_HISTORY_02EA;
+            d[0x0328] = GuildHandler.Handle_GUILD_CONTRIBUTE_HISTORY_0328;
+            d[0x0312] = GuildHandler.Handle_CHANGE_GUILD_MARK_0312;
+            d[0x04C4] = GuildHandler.Handle_CONTRACT_OF_GUILD_04C4;
+            d[0x015A] = GuildHandler.Handle_GUILD_DONATE_015A;
+            d[0x04EC] = GuildHandler.Handle_GUILD_CHECKIN_04EC;
+            d[0x04ED] = GuildHandler.Handle_GUILD_CHECKIN_ONLINE_04ED;
+            d[0x008C] = GuildHandler.Handle_GUILD_ALLY_LIST_008C;
+            d[0x02B3] = GuildHandler.Handle_GUILD_PROMO_MODIFY_02B3;
+            d[0x015C] = GuildHandler.Handle_REQUEST_JOIN_GUILD;
+            d[0x015D] = GuildHandler.Handle_CANCEL_JOIN_GUILD_015D;
+            d[0x0160] = GuildHandler.Handle_GUILD_JOIN_LIST;
+            d[0x0097] = GuildHandler.Handle_GUILD_INVITE_0097;
+            d[0x0098] = GuildHandler.Handle_GUILD_INVITE_REPLY_0098;
+            d[0x009A] = GuildHandler.Handle_NOTIFY_MESSAGE_TO_GUILD_009A;
+            d[0x015E] = GuildHandler.Handle_GUILD_ACCEPT_APPLY_015E;
+            d[0x015F] = GuildHandler.Handle_GUILD_REJECT_APPLY_015F;
+            d[0x0153] = GuildHandler.Handle_REFRESH_GUILD_INFO_0153;
+            d[0x004A] = GuildHandler.Handle_GUILD_INFO_004A;
+            d[0x02EB] = GuildHandler.Handle_CHANGE_GUILD_GRADE_02EB;
+            d[0x02EC] = GuildHandler.Handle_CHANGE_GUILD_GRADE_NAME_02EC;
+            d[0x007E] = GuildHandler.Handle_SET_SUB_GUILD_MASTER_007E;
+            d[0x0099] = GuildHandler.Handle_REQ_GUILD_SECEDE_0099;
+            d[0x0329] = GuildHandler.Handle_SET_REPRESENTATIVE_0329;
+            d[0x009B] = GuildHandler.Handle_GUILD_MASTER_DELEGATE_009B;
+            d[0x012F] = GuildHandler.Handle_BREAK_GUILD_012F;
+            d[0x02F8] = GuildHandler.Handle_BUY_GUILD_CONTENTS_02F8;
+            d[0x033B] = GuildHandler.Handle_SET_GUILD_RECOMMAND_CHANNEL_033B;
+
+            GuildWarehouseHandler.Bind(
+                _inventoryRefreshSender,
+                _worldDependencies.Sessions);
+            d[0x0105] = GuildWarehouseHandler.Handle;
+            d[0x00F7] = GuildWarehouseHandler.Handle;
+            d[0x00F8] = GuildWarehouseHandler.Handle;
+            d[0x00F9] = GuildWarehouseHandler.Handle;
         }
 
         private void RegisterPartyHandlers(GameCommandRegistry.GameCommandRegistrationGroup d)

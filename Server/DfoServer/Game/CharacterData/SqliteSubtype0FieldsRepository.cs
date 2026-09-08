@@ -1,6 +1,7 @@
 using System;
 using Microsoft.Data.Sqlite;
 using DfoServer.Game.Inventory;
+using DfoServer.Game.Guilds;
 using DfoServer.Game.SelectCharacter;
 using DfoServer.Infrastructure;
 
@@ -158,6 +159,14 @@ namespace DfoServer.Game.CharacterData
                 return;
 
             ClearDynamicTailFields(snapshot);
+            var guild = GuildSystem.GetGuildOfCharacter(characterId);
+            if (guild != null)
+            {
+                snapshot.GuildId = (uint)guild.GuildId;
+                snapshot.GuildNameBytes = ClientTextEncoding.GetBytes(
+                    guild.Name ?? string.Empty);
+                snapshot.GuildLevel = (byte)Math.Max(0, Math.Min(255, guild.Level));
+            }
             LoadNameTagFields(conn, characterId, snapshot);
             var projectionBuilder = new Noti2InventoryProjectionBuilder();
             if (InventoryContext.TryGetLease(characterId, out var lease))
@@ -175,7 +184,9 @@ namespace DfoServer.Game.CharacterData
             snapshot.EquippedCreatureItemId = 0;
             snapshot.EquippedCreatureNameBytes = new byte[0];
             snapshot.EquippedCreatureAliveState = 0;
+            snapshot.GuildId = 0;
             snapshot.GuildNameBytes = new byte[0];
+            snapshot.GuildLevel = 0;
         }
 
         private static void LoadNameTagFields(SqliteConnection conn, int characterId, UserInfoMinimumTailSnapshot snapshot)
