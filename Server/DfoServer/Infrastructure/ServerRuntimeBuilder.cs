@@ -96,6 +96,7 @@ namespace DfoServer.Infrastructure
                 world);
             var socialHandlers = GetOrCreateGameProtocolSocialHandlers(
                 core,
+                inventory,
                 world,
                 townDungeonHandlers,
                 udpRelay,
@@ -550,6 +551,7 @@ namespace DfoServer.Infrastructure
 
         internal GameProtocolSocialHandlers GetOrCreateGameProtocolSocialHandlers(
             GameProtocolCoreDependencies core = null,
+            GameProtocolInventoryDependencies inventory = null,
             GameProtocolWorldDependencies world = null,
             GameProtocolTownDungeonHandlers townDungeon = null,
             PartyUdpRelay udpRelay = null,
@@ -568,6 +570,7 @@ namespace DfoServer.Infrastructure
             }
 
             core ??= GetOrCreateGameProtocolCoreDependencies();
+            inventory ??= GetOrCreateGameProtocolInventoryDependencies(core);
             if (world == null)
             {
                 if (_boundSessionDirectory == null)
@@ -581,13 +584,14 @@ namespace DfoServer.Infrastructure
             }
             townDungeon ??= GetOrCreateGameProtocolTownDungeonHandlers(
                 core,
-                GetOrCreateGameProtocolInventoryDependencies(core),
+                inventory,
                 world);
 
             _boundUdpRelay = udpRelay;
             _boundPvpUdpRelay = pvpUdpRelay;
             _gameProtocolSocialHandlers = CreateGameProtocolSocialHandlers(
                 core,
+                inventory,
                 world,
                 townDungeon,
                 udpRelay,
@@ -597,12 +601,15 @@ namespace DfoServer.Infrastructure
 
         internal static GameProtocolSocialHandlers CreateGameProtocolSocialHandlers(
             GameProtocolCoreDependencies core,
+            GameProtocolInventoryDependencies inventory,
             GameProtocolWorldDependencies world,
             GameProtocolTownDungeonHandlers townDungeon,
             PartyUdpRelay udpRelay,
             PartyUdpRelay pvpUdpRelay)
         {
             if (core == null) throw new ArgumentNullException(nameof(core));
+            if (inventory == null)
+                throw new ArgumentNullException(nameof(inventory));
             if (world == null) throw new ArgumentNullException(nameof(world));
             if (townDungeon == null)
                 throw new ArgumentNullException(nameof(townDungeon));
@@ -614,6 +621,7 @@ namespace DfoServer.Infrastructure
                 udpRelay,
                 characterTransitions: world.CharacterTransitions,
                 database: core.Database);
+            party.AttachInventoryRefresh(inventory.InventoryRefreshSender);
             var raid = new RaidHandler(
                 core.CharacterRepository,
                 world.Sessions,
@@ -867,6 +875,7 @@ namespace DfoServer.Infrastructure
                 world);
             socialHandlers ??= GetOrCreateGameProtocolSocialHandlers(
                 core,
+                inventory,
                 world,
                 townDungeonHandlers,
                 _boundUdpRelay,

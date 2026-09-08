@@ -62,6 +62,7 @@ namespace DfoServer
             ("--selftest-pvf-map-monster-parsing", SelfTests.PvfMapMonsterParsingSelfTest.Run),
             ("--selftest-sequential-dungeon-info-protocol", SelfTests.SequentialDungeonInfoProtocolSelfTest.Run),
             ("--selftest-licensed-dungeon", SelfTests.LicensedDungeonSelfTest.Run),
+            ("--selftest-player-trade", SelfTests.PlayerTradeSelfTest.Run),
             ("--selftest-experience-item-definition", SelfTests.ExperienceItemDefinitionSelfTest.Run),
         };
 

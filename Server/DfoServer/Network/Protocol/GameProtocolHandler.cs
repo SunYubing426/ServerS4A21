@@ -141,6 +141,7 @@ namespace DfoServer.Network
             socialHandlers ??= ServerRuntimeBuilder
                 .CreateGameProtocolSocialHandlers(
                     core,
+                    inventory,
                     world,
                     townDungeonHandlers,
                     udpRelay,
@@ -354,6 +355,8 @@ namespace DfoServer.Network
             d[0x000E] = _partyHandler.Handle_WALKOUT_PARTY_MEMBER;  // 14 踢人
             d[0x000A] = _partyHandler.Handle_REQUEST_PEER;          // 10 右键同屏玩家→组队/交易邀请(按uid)→给目标发 SC 0x0007 弹框
             d[0x000B] = _partyHandler.Handle_RES_PEER;              // 11 被邀请者应答: type0 7B接受/9B拒绝；仅接受才组队
+            d[(ushort)CmdPacketTypeA21.SET_ITEMTRADE_STATE] =
+                _partyHandler.Handle_SET_ITEMTRADE_STATE;
             // 419 creates a chat/1:1 conversation; party invites use 0x000A/0x000B.
             d[0x01A3] = _chatHandler.Handle_CREATE_GROUP;
             d[(ushort)CmdPacketType.ONE_TO_ONE_CHAT_STATE] =
@@ -426,6 +429,8 @@ namespace DfoServer.Network
                 if (await _dungeonHandler.TryHandleDeathTowerMoveItem(s, h, b))
                     return;
                 if (await _knightShieldHandler.TryHandleMoveItemSpace(s, h, b))
+                    return;
+                if (await _partyHandler.TryHandleTradeMoveAsync(s, h, b))
                     return;
                 await _inventoryHandler.Handle_ENUM_CMDPACKET_MOVE_ITEMSPACE(s, h, b);
             };                                                                    //19

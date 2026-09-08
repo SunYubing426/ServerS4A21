@@ -84,6 +84,69 @@ namespace DfoServer.Game.Inventory
             }
         }
 
+        // 玩家交易专用：双方在线背包在同一 SQLite 事务内落库。
+        internal static bool SaveDirtyPair(
+            InventoryLease firstLease,
+            InventoryLease secondLease)
+        {
+            if (firstLease == null || secondLease == null
+                || firstLease.Inventory == null || secondLease.Inventory == null
+                || firstLease.CharacterId == secondLease.CharacterId)
+                return false;
+
+            var firstDatabase = firstLease.Inventory.Database
+                ?? GameDatabase.CreateDefault();
+            var secondDatabase = secondLease.Inventory.Database
+                ?? GameDatabase.CreateDefault();
+            if (firstDatabase == null || secondDatabase == null
+                || !string.Equals(
+                    firstDatabase.ConnectionString,
+                    secondDatabase.ConnectionString,
+                    StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            try
+            {
+                var firstLock = firstLease.CharacterId < secondLease.CharacterId
+                    ? firstLease
+                    : secondLease;
+                var secondLock = firstLock == firstLease
+                    ? secondLease
+                    : firstLease;
+                lock (firstLock.SyncRoot)
+                lock (secondLock.SyncRoot)
+                {
+                    var firstDirty = HasDirtyData(firstLease.Inventory);
+                    var secondDirty = HasDirtyData(secondLease.Inventory);
+                    if (!firstDirty && !secondDirty)
+                        return true;
+
+                    using (var connection = firstDatabase.OpenConnection())
+                    using (var transaction = connection.BeginTransaction())
+                    {
+                        if ((firstDirty && !SaveDirtyInTransaction(
+                                connection, transaction, firstLease))
+                            || (secondDirty && !SaveDirtyInTransaction(
+                                connection, transaction, secondLease)))
+                            return false;
+                        transaction.Commit();
+                    }
+
+                    if (firstDirty)
+                        firstLease.Inventory.ClearDirtyState();
+                    if (secondDirty)
+                        secondLease.Inventory.ClearDirtyState();
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                FileLogger.Log(
+                    $"[InventoryPersistence] SaveDirtyPair failed firstCid={firstLease.CharacterId} secondCid={secondLease.CharacterId}: {ex.Message}");
+                return false;
+            }
+        }
+
         internal static bool SaveDirtyAndLoadWallet(InventoryLease lease, out WalletSnapshot wallet)
         {
             wallet = null;
