@@ -20,7 +20,7 @@ namespace DfoServer.Network.Handlers
     // 状态走 PartyManager(格式无关), 队伍窗口靠 PARTY_INFO(Noti 0x09) 重发整份名册刷新(df 新建/更新即如此)。
     // ⚠️ Phase A 只向请求者本会话下发 PARTY_INFO(单人队够用); 多人广播需 UserId→session 注册表, 留待 Phase B。
     // ⚠️ 响应帧照 df 逆向(PARTY_INFO 无活体样本), 需真机验证客户端渲染(参 compound #432 教训)。
-    public sealed class PartyHandler : IDisposable
+    public sealed partial class PartyHandler : IDisposable
     {
         private readonly PartyManager _partyManager;
         private readonly ICharacterRepository _characterRepository;
@@ -161,6 +161,7 @@ namespace DfoServer.Network.Handlers
             var uid = (ushort)characterId;
             var result = _partyManager.OnSessionDisconnected(
                 uid, dying.SessionId);
+            ClearTradeStateForSession(uid, dying.SessionId);
             if (!result.Ok)
                 return;   // 不在任何队伍, 无事可做
 
@@ -1248,9 +1249,7 @@ namespace DfoServer.Network.Handlers
             if (targetUid == inviterUid)
                 return;
 
-            // ★交易 阶段1: reqType==1 = ENUM_PEER_REQUEST_TYPE TRADE → 给对方弹【交易确认窗】(而非组队框)。
-            //   交易形态 body = 11B [A.uid:2][01][peer:4][createTime:4](含 peer, 漏了长度不符被客户端静默丢弃→不弹窗)。
-            //   阶段2(放置道具窗/换物)待专项; 此处保证交易请求不弹成组队框, 且 accept 不误组队(见 RES_PEER)。
+            // 交易请求走独立交易会话；邀请登记必须绑定双方当前 SessionId。
             if (reqType == 2)
             {
                 if (body.Length != 7 ||
@@ -1279,6 +1278,58 @@ namespace DfoServer.Network.Handlers
                     return;
                 }
 
+                var pendingKey = MakeDirectedTradeKey(inviterUid, targetUid);
+                var refreshPending = false;
+                var rejectPending = false;
+                lock (_tradePairsLock)
+                {
+                    if (_tradePeers.ContainsKey(inviterUid)
+                        || _tradePeers.ContainsKey(targetUid))
+                    {
+                        rejectPending = true;
+                    }
+                    else if (_pendingTradePeerIds.TryGetValue(
+                                 pendingKey,
+                                 out var existingPending)
+                             && existingPending.InviterSessionId == session.SessionId
+                             && existingPending.AccepterSessionId == targetSession.SessionId)
+                    {
+                        refreshPending = true;
+                        _pendingTradePeerIds[pendingKey] =
+                            new PendingTradeInvite(
+                                session.SessionId,
+                                targetSession.SessionId,
+                                peerInt);
+                    }
+                    else if (HasPendingTradeInviteLocked(inviterUid)
+                             || HasPendingTradeInviteLocked(targetUid))
+                    {
+                        rejectPending = true;
+                    }
+                    else
+                    {
+                        _pendingTradePeerIds[pendingKey] =
+                            new PendingTradeInvite(
+                                session.SessionId,
+                                targetSession.SessionId,
+                                peerInt);
+                    }
+                }
+                if (rejectPending)
+                {
+                    FileLogger.Log(
+                        $"[{ProtocolName}] TRADE REQUEST_PEER rejected "
+                        + $"A={inviterUid}->B={targetUid} "
+                        + "reason=active-or-pending");
+                    return;
+                }
+                if (refreshPending)
+                {
+                    FileLogger.Log(
+                        $"[{ProtocolName}] TRADE REQUEST_PEER refreshed "
+                        + $"A={inviterUid}->B={targetUid}");
+                }
+
                 var tw = new GamePacketWriter();
                 tw.WriteUInt16(inviterUid);   // A.uid
                 tw.WriteByte(1);              // ENUM_PEER_REQUEST_TYPE = 1 TRADE
@@ -1296,7 +1347,19 @@ namespace DfoServer.Network.Handlers
                         $"trade invite target={targetUid}");
                 if (tradeSent)
                 {
-                    FileLogger.Log($"[{ProtocolName}] TRADE REQUEST_PEER A={inviterUid}->B={targetUid} → SC 0x0007 交易形态(11B, ⚠️阶段2待实现)");
+                    FileLogger.Log($"[{ProtocolName}] TRADE REQUEST_PEER A={inviterUid}->B={targetUid} → SC 0x0007 交易形态(11B)");
+                }
+                else
+                {
+                    lock (_tradePairsLock)
+                    {
+                        if (_pendingTradePeerIds.TryGetValue(
+                                pendingKey,
+                                out var pending)
+                            && pending.InviterSessionId == session.SessionId
+                            && pending.AccepterSessionId == targetSession.SessionId)
+                            _pendingTradePeerIds.Remove(pendingKey);
+                    }
                 }
                 return;
             }
@@ -1387,6 +1450,9 @@ namespace DfoServer.Network.Handlers
         // 只有接受形态才允许进入组队 mutation；拒绝/异常形态只消费 exact pending。
         internal static bool IsAcceptedTypeZeroPeerResponse(byte[] body)
             => body != null && body.Length == 7 && body[2] == 0;
+
+        internal static bool IsAcceptedTradePeerResponse(byte[] body)
+            => body != null && body.Length == 7 && body[2] == 1;
 
         public Task Handle_RES_PEER(
             EnhancedClientSession session,
@@ -1515,7 +1581,48 @@ namespace DfoServer.Network.Handlers
             //   阶段2(开道具放置窗 + 换物)待专项; 此处止血: 交易同意不再误组队。
             if (reqType == 1)
             {
-                FileLogger.Log($"[{ProtocolName}] RES_PEER TRADE accept: A={inviterUid} B={accepterUid} → 交易已确认(不组队); ⚠️阶段2放置窗/换物待实现");
+                if (!IsAcceptedTradePeerResponse(body))
+                {
+                    TryClearTradeInvite(
+                        inviterUid,
+                        accepterUid,
+                        inviterSession.SessionId,
+                        session.SessionId);
+                    return;
+                }
+                if (!TryTakeTradeInvite(
+                        inviterUid,
+                        accepterUid,
+                        inviterSession.SessionId,
+                        session.SessionId,
+                        out var pendingPeerInt))
+                    return;
+                RegisterTradePair(
+                    inviterUid,
+                    inviterSession.SessionId,
+                    accepterUid,
+                    session.SessionId);
+
+                var inviterAck = new GamePacketWriter();
+                inviterAck.WriteUInt16(accepterUid);
+                inviterAck.WriteByte(1);
+                inviterAck.WriteInt32(BitConverter.ToInt32(body, 3));
+                await inviterSession.SendPacketAsync(
+                    GamePacketEnvelopeBuilder.Build(
+                        0x00,
+                        (ushort)NotiPacketTypeA21.RESPONSE_PEER,
+                        inviterAck.ToArray()));
+
+                var accepterAck = new GamePacketWriter();
+                accepterAck.WriteUInt16(inviterUid);
+                accepterAck.WriteByte(1);
+                accepterAck.WriteInt32(pendingPeerInt);
+                await session.SendPacketAsync(
+                    GamePacketEnvelopeBuilder.Build(
+                        0x00,
+                        (ushort)NotiPacketTypeA21.RESPONSE_PEER,
+                        accepterAck.ToArray()));
+                FileLogger.Log($"[{ProtocolName}] RES_PEER TRADE accept: A={inviterUid} B={accepterUid} → 交易窗已建立");
                 return;
             }
             var (icid, iaid) = SessionOwnerResolver.Resolve(inviterSession);

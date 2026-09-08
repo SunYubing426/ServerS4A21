@@ -17,6 +17,7 @@ namespace DfoServer.Game.Inventory
         AdminGrant = 7,
         CharacterCreate = 8,
         DailyRefill = 9,
+        PlayerTrade = 10,
     }
 
     internal sealed class InventoryCreateOptions

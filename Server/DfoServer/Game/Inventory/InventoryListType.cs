@@ -6,6 +6,7 @@ namespace DfoServer.Game.Inventory
         Avatar = 1,
         PersonalCargo = 2,
         Equipment = 3,
+        Trade = 4,
         Pet = 7,
         AccountCargo = 12,
         TitleBookGeneral = 19,
