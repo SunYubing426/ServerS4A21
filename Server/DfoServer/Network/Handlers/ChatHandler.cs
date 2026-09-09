@@ -21,6 +21,7 @@ namespace DfoServer.Network.Handlers
         private const byte AlternateDirectMessageMode = 7;
         private const byte OneToOneConversationMode = 45;
         private const byte RaidMessageMode = 52;
+        private const byte RaidCommandMessageMode = 53;
 
         private readonly ISessionDirectory _sessions;
         private readonly PartyManager _parties;
@@ -146,7 +147,8 @@ namespace DfoServer.Network.Handlers
                 return result.Values.ToList();
             }
 
-            if (request.Mode == RaidMessageMode)
+            if (request.Mode == RaidMessageMode
+                || request.Mode == RaidCommandMessageMode)
             {
                 if (_raids.TryGetByUser(sender.Player.UserId, out var raid))
                 {
