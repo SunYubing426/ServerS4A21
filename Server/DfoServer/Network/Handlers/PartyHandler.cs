@@ -874,6 +874,11 @@ namespace DfoServer.Network.Handlers
                 return;
             }
 
+            if (_raidHandler != null)
+            {
+                await _raidHandler.HandleNormalPartyLeftAsync(uid);
+            }
+
             if (!identityCurrent)
             {
                 await PublishCommittedDepartureAsync(

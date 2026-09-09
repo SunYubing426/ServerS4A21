@@ -26,6 +26,7 @@ namespace DfoServer.SelfTests
                 RaidPacketBuilder.BuildRaidResult(1, 0, 0, uint.MaxValue, 0, 1).SequenceEqual(
                     new byte[] { 1, 0, 0, 0, 0, 0, 255, 255, 0, 1 }), ref failures);
             CheckPreparation(ref failures);
+            CheckLeaderLifecycle(ref failures);
             CheckPhaseIsolation(ref failures);
             CheckLivePartyAssignment(ref failures);
             var costs = RaidPacketBuilder.BuildEntryCostInfo(new[] {
@@ -445,6 +446,25 @@ namespace DfoServer.SelfTests
                 !multiple.TryCommitPreparationResponse(other[0].UserId, other[0].SessionId, other[3].UserId, other[3].SessionId, _ => true), ref failures);
         }
 
+        private static void CheckLeaderLifecycle(ref int failures)
+        {
+            var manager = new RaidManager();
+            var leader = new RaidMember { UserId = 71, CharacterId = 71, SessionId = Guid.NewGuid(), PartyIndex = 1 };
+            var member = new RaidMember { UserId = 72, CharacterId = 72, SessionId = Guid.NewGuid(), PartyIndex = 1 };
+            var raid = manager.Create(Array.Empty<byte>(), leader, 200);
+            manager.TryAddMember(raid.RaidId, member, out _);
+
+            Check("nonleader cannot transfer raid leadership",
+                !manager.TryTransferLeader(member.UserId, leader.UserId, out _), ref failures);
+            Check("leader transfer promotes the selected raid member",
+                manager.TryTransferLeader(leader.UserId, member.UserId, out var transferred)
+                && transferred.LeaderUserId == member.UserId, ref failures);
+
+            var left = manager.Leave(member.UserId);
+            Check("leader leaving preserves the raid and promotes a remaining member",
+                left.Ok && !left.Disbanded && left.RemainingRaid?.LeaderUserId == leader.UserId, ref failures);
+        }
+
         public class UnusedDependency : System.Reflection.DispatchProxy
         {
             protected override object Invoke(System.Reflection.MethodInfo method, object[] args)
@@ -470,6 +490,8 @@ namespace DfoServer.SelfTests
             var member = new RaidMember { UserId = 43, CharacterId = 43, SessionId = Guid.NewGuid(), PartyIndex = 1 };
             RaidSnapshot ToBreak()
             {
+                manager.Leave(leader.UserId);
+                manager.Leave(member.UserId);
                 var made = manager.Create(Array.Empty<byte>(), leader, 200);
                 manager.TryAddMember(made.RaidId, member, out _);
                 if (!manager.TryBeginStart(leader.UserId, out var start)

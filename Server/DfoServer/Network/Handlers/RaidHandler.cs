@@ -320,7 +320,14 @@ public sealed partial class RaidHandler
 		uint partyIndex = BitConverter.ToUInt32(body, 8);
 		RaidSnapshot raid = null;
 		bool ok = false;
-		if (op == 0 && partyIndex <= 10 && _raids.TryGetByUser(actingUserId, out var currentRaid))
+		if (op == 1 && _raids.TryGetByUser(actingUserId, out _))
+		{
+			ok = _raids.TryTransferLeader(
+				actingUserId,
+				targetActorId,
+				out raid);
+		}
+		else if (op == 0 && partyIndex <= 10 && _raids.TryGetByUser(actingUserId, out var currentRaid))
 		{
 			if ((currentRaid.State == 2 || currentRaid.State == 5) && LivePartyAssignment != null)
 			{
@@ -336,7 +343,13 @@ public sealed partial class RaidHandler
 			await BroadcastRaidObjectAsync(raid);
 			await BroadcastRaidMembersAsync(raid);
 			await BroadcastRaidMonsterStatusAsync(raid);
-			FileLogger.Log($"[GameProtocol] RAID_MANAGER_WORK raid={raid.RaidId} user={actingUserId} actor={targetActorId} partyIndex={partyIndex}");
+			FileLogger.Log(
+				op == 1
+					? $"[GameProtocol] RAID_TRANSFER_LEADER raid={raid.RaidId} " +
+						$"from={actingUserId} to={targetActorId}"
+					: $"[GameProtocol] RAID_MANAGER_WORK raid={raid.RaidId} " +
+						$"user={actingUserId} actor={targetActorId} " +
+						$"partyIndex={partyIndex}");
 		}
 	}
 

@@ -268,6 +268,30 @@ namespace DfoServer.Game.Raid
             }
         }
 
+        public bool TryTransferLeader(
+            ushort actingUserId,
+            ushort targetUserId,
+            out RaidSnapshot raid)
+        {
+            lock (_lock)
+            {
+                raid = null;
+                if (!TryGetAggregate(actingUserId, out var aggregate)
+                    || aggregate.LeaderUserId != actingUserId
+                    || aggregate.StartPending
+                    || targetUserId == actingUserId
+                    || aggregate.GetMember(targetUserId) == null)
+                {
+                    return false;
+                }
+
+                aggregate.LeaderUserId = targetUserId;
+                aggregate.AssignmentVersion = Guid.NewGuid();
+                raid = aggregate.Snapshot();
+                return true;
+            }
+        }
+
         internal bool TryAssignLiveParty(RaidSnapshot expected, ushort actor, Guid actorSession,
             ushort target, uint index, Func<IReadOnlyList<RaidMember>, bool> commit, out RaidSnapshot raid)
         {
@@ -1068,7 +1092,14 @@ namespace DfoServer.Game.Raid
             if (member != null)
                 _sessionToUser.Remove(member.SessionId);
 
-            if (raid.Members.Count == 0 || raid.LeaderUserId == userId)
+            if (_clearParticipants.TryGetValue(
+                    raid.RaidId,
+                    out var clearParticipants))
+            {
+                clearParticipants.Remove(userId);
+            }
+
+            if (raid.Members.Count == 0)
             {
                 foreach (var remaining in raid.Members)
                 {
@@ -1086,6 +1117,11 @@ namespace DfoServer.Game.Raid
                     RaidId = raid.RaidId,
                     PreviousRaid = previous,
                 };
+            }
+
+            if (raid.LeaderUserId == userId)
+            {
+                raid.LeaderUserId = raid.Members[0].UserId;
             }
 
             return new RaidLeaveResult
