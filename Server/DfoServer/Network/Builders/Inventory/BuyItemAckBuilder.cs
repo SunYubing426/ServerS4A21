@@ -17,11 +17,14 @@ namespace DfoServer.Network.Builders
 
             if (result.CoreSnapshot != null && result.SlotIndex >= 0)
             {
+                var protocolCount = result.RemainingStackCount > 0
+                    ? result.RemainingStackCount
+                    : result.RequestedCount;
                 ItemListProtocolWriter.WriteCommonEntry84(
                     writer,
                     result.SlotIndex,
                     result.CoreSnapshot,
-                    result.RequestedCount);
+                    protocolCount);
             }
             else
             {

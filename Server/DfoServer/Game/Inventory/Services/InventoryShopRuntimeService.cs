@@ -356,7 +356,7 @@ namespace DfoServer.Game.Inventory
         {
             metadata = null;
             effectiveCount = 0;
-            if (inventory == null || itemTemplateId <= 0 || requestedCount <= 0 || requestedCount > short.MaxValue)
+            if (inventory == null || itemTemplateId <= 0 || requestedCount <= 0)
                 return false;
 
             metadata = ItemMetadataResolver.Resolve(itemTemplateId);
