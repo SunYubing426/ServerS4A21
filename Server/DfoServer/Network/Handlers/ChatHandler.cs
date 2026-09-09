@@ -1,5 +1,6 @@
 using DfoServer.Game.Guilds;
 using DfoServer.Game.Party;
+using DfoServer.Game.Raid;
 using DfoServer.Game.Session;
 using System;
 using System.Collections.Generic;
@@ -19,9 +20,12 @@ namespace DfoServer.Network.Handlers
         private const byte GuildMessageMode = 6;
         private const byte AlternateDirectMessageMode = 7;
         private const byte OneToOneConversationMode = 45;
+        private const byte RaidMessageMode = 52;
+        private const byte RaidCommandMessageMode = 53;
 
         private readonly ISessionDirectory _sessions;
         private readonly PartyManager _parties;
+        private readonly RaidManager _raids;
         private readonly object _conversationLock = new object();
         private readonly Dictionary<ulong, uint> _activeConversations =
             new Dictionary<ulong, uint>();
@@ -29,12 +33,15 @@ namespace DfoServer.Network.Handlers
 
         public ChatHandler(
             ISessionDirectory sessions,
-            PartyManager parties)
+            PartyManager parties,
+            RaidManager raids)
         {
             _sessions = sessions
                 ?? throw new ArgumentNullException(nameof(sessions));
             _parties = parties
                 ?? throw new ArgumentNullException(nameof(parties));
+            _raids = raids
+                ?? throw new ArgumentNullException(nameof(raids));
             _sessions.SessionEnding += OnSessionEndingAsync;
         }
 
@@ -140,6 +147,24 @@ namespace DfoServer.Network.Handlers
                 return result.Values.ToList();
             }
 
+            if (request.Mode == RaidMessageMode
+                || request.Mode == RaidCommandMessageMode)
+            {
+                if (_raids.TryGetByUser(sender.Player.UserId, out var raid))
+                {
+                    foreach (var member in raid.Members)
+                    {
+                        if (_sessions.TryGet(
+                                checked((int)member.CharacterId),
+                                out var memberSession))
+                        {
+                            AddIfOnline(result, memberSession);
+                        }
+                    }
+                }
+                return result.Values.ToList();
+            }
+
             if (request.Mode == PartyMessageMode
                 || sender.Player.CurrentRun != null)
             {
@@ -152,10 +177,7 @@ namespace DfoServer.Network.Handlers
                                 member.CharacterId,
                                 out var memberSession))
                         {
-                            AddIfCurrentChannel(
-                                result,
-                                sender,
-                                memberSession);
+                            AddIfOnline(result, memberSession);
                         }
                     }
                 }
@@ -183,9 +205,10 @@ namespace DfoServer.Network.Handlers
                     foreach (var member in guild.Members)
                     {
                         if (_sessions.TryGet(member.CharacterId, out var memberSession))
-                            AddIfCurrentChannel(result, sender, memberSession);
+                            AddIfOnline(result, memberSession);
                     }
                 }
+                return result.Values.ToList();
             }
 
             // Unknown modes deliberately remain sender-only.  Several values

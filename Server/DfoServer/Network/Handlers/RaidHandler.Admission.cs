@@ -403,6 +403,7 @@ public sealed partial class RaidHandler
 			session,
 			raid,
 			includeState: false);
+		await SendRaidTimerSnapshotAsync(session, raid);
 		FileLogger.Log($"[GameProtocol] RAID_REQUEST_MEMBERS raid={raid.RaidId} user={userId} body={BitConverter.ToString(body ?? Array.Empty<byte>())}");
 	}
 
@@ -554,35 +555,43 @@ public sealed partial class RaidHandler
 							(ushort)NotiPacketType.RAID_SET_SYMBOL,
 							RaidPacketBuilder.BuildSetSymbols(symbols)));
 				}
-				if (_raids.TryGetAttackRemainingSeconds(
-						raid.RaidId,
-						AttackSeconds,
-						out var remainingSeconds))
-				{
-					await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
-						0,
-						(ushort)NotiPacketType.RAID_SET_TIMER,
-						RaidPacketBuilder.BuildSetTimer(0u, 0u, remainingSeconds)));
-					await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
-						0,
-						(ushort)NotiPacketType.RAID_REMAIN_TIME,
-						RaidPacketBuilder.BuildRemainTime(0, remainingSeconds)));
-				}
 			}
-			else if (raid.State == 3)
-			{
-				var remainingBreakSeconds = GetAntonPhaseBreakRemainingSeconds();
-				await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
-					0,
-					(ushort)NotiPacketType.RAID_SET_TIMER,
-					RaidPacketBuilder.BuildSetTimer(0u, 0u, remainingBreakSeconds)));
-				await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
-					0,
-					(ushort)NotiPacketType.RAID_REMAIN_TIME,
-					RaidPacketBuilder.BuildRemainTime(1, remainingBreakSeconds)));
-			}
+			await SendRaidTimerSnapshotAsync(session, raid);
 			await SendRaidBuffStatusAsync(session, raid.RaidId);
 			await SendRaidMonsterStatusAsync(session, raid);
+		}
+	}
+
+	private async Task SendRaidTimerSnapshotAsync(
+		EnhancedClientSession session,
+		RaidSnapshot raid)
+	{
+		if (raid.State == 2
+			&& _raids.TryGetAttackRemainingSeconds(
+				raid.RaidId,
+				AttackSeconds,
+				out var remainingSeconds))
+		{
+			await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
+				0,
+				(ushort)NotiPacketType.RAID_SET_TIMER,
+				RaidPacketBuilder.BuildSetTimer(0u, 0u, remainingSeconds)));
+			await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
+				0,
+				(ushort)NotiPacketType.RAID_REMAIN_TIME,
+				RaidPacketBuilder.BuildRemainTime(0, remainingSeconds)));
+		}
+		else if (raid.State == 3)
+		{
+			var remainingBreakSeconds = GetAntonPhaseBreakRemainingSeconds();
+			await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
+				0,
+				(ushort)NotiPacketType.RAID_SET_TIMER,
+				RaidPacketBuilder.BuildSetTimer(0u, 0u, remainingBreakSeconds)));
+			await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
+				0,
+				(ushort)NotiPacketType.RAID_REMAIN_TIME,
+				RaidPacketBuilder.BuildRemainTime(1, remainingBreakSeconds)));
 		}
 	}
 
