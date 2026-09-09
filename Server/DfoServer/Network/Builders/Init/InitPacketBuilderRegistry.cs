@@ -92,7 +92,8 @@ namespace DfoServer.Network.Builders
             Register(new RentalInfoBodyBuilder());                                      
             Register(new LotteryBufferBodyBuilder(_database));                          
             Register(new CubeInfoBodyBuilder());                                        
-            Register(new FatigueAccelBodyBuilder());                                    
+            Register(new BoosterGageBodyBuilder());
+            Register(new FatigueAccelBodyBuilder());
 
             
             

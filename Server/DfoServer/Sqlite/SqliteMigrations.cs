@@ -58,6 +58,7 @@ namespace DfoServer.Sqlite
                 new MigrationStep(33, "add_guild_log", ApplyGuildLog),
                 new MigrationStep(34, "add_guild_economy_storage", ApplyGuildEconomyStorage),
                 new MigrationStep(35, "add_auction_house", ApplyAuctionHouse),
+                new MigrationStep(36, "add_seria_luck_ui_event", ApplySeriaLuckUiEvent),
             };
 
         internal static int CurrentVersion =>
@@ -823,6 +824,28 @@ CREATE TABLE IF NOT EXISTS auction_bot_price_adj (
     sold_count INTEGER NOT NULL DEFAULT 0,
     recycled_count INTEGER NOT NULL DEFAULT 0,
     updated_at_unix INTEGER NOT NULL DEFAULT 0
+);");
+        }
+
+        private static void ApplySeriaLuckUiEvent(
+            SqliteConnection connection,
+            SqliteTransaction transaction)
+        {
+            ExecuteSql(connection, transaction, @"
+INSERT INTO game_event_state(event_id, state)
+VALUES(2037, 1)
+ON CONFLICT(event_id) DO UPDATE SET state=1;
+
+INSERT OR IGNORE INTO game_event_info_details (
+    event_id, unknown0, start_notice, end_notice, detail_flag,
+    flag_a, flag_b, title, short_name, reserved_or_icon,
+    start_unix_time, end_unix_time, link_key, description,
+    detail_enabled, sort_order, updated_at
+) VALUES (
+    2037, 0, '[S4A21]', '[S4A21]', 0,
+    0, 0, '', '', '',
+    0, 0, '', '',
+    0, 0, CURRENT_TIMESTAMP
 );");
         }
 
