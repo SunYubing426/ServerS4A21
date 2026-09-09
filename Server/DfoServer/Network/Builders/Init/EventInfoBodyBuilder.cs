@@ -7,6 +7,9 @@ namespace DfoServer.Network.Builders
 {
     public sealed class EventInfoBodyBuilder : IInitPacketBuilder
     {
+        internal const ushort RaidChannelEventIndex = 0x00B5;
+        private const uint RaidChannelSeed = 0x29209694;
+
         private readonly GameEventRepository _repository;
 
         public EventInfoBodyBuilder()
@@ -38,10 +41,15 @@ namespace DfoServer.Network.Builders
             var extraEntries = snapshot?.ExtraEntries
                 ?? Array.Empty<GameEventExtraInfoEntry>();
 
-            writer.WriteUInt16((ushort)Math.Min(ushort.MaxValue, entries.Count));
+            writer.WriteUInt16((ushort)Math.Min(ushort.MaxValue, 1 + entries.Count));
+            WriteRaidChannelEntry(writer);
+
             for (var index = 0; index < entries.Count && index < ushort.MaxValue; index++)
             {
                 var entry = entries[index];
+                if (entry.EventId == RaidChannelEventIndex)
+                    continue;
+
                 writer.WriteUInt16(entry.EventId);
                 writer.WriteUInt32(entry.Unknown0);
                 WriteDstr(writer, entry.StartNotice);
@@ -77,6 +85,15 @@ namespace DfoServer.Network.Builders
             }
 
             return writer.ToArray();
+        }
+
+        private static void WriteRaidChannelEntry(GamePacketWriter writer)
+        {
+            writer.WriteUInt16(RaidChannelEventIndex);
+            writer.WriteUInt32(RaidChannelSeed);
+            writer.WriteDstr(new byte[] { 0x00 });
+            writer.WriteDstr(Array.Empty<byte>());
+            writer.WriteByte(0);
         }
 
         private static void WriteDstr(GamePacketWriter writer, string value)

@@ -312,7 +312,19 @@ namespace DfoServer.SelfTests
 
         private static void VerifyEventInfoBody(ref int failures)
         {
-            var body = EventInfoBodyBuilder.Build(new GameEventInfoSnapshot
+            var body = EventInfoBodyBuilder.Build(null);
+
+            Check(
+                "EVENT_INFO keeps the raid channel placeholder first",
+                body.Length == 19
+                && BitConverter.ToUInt16(body, 0) == 1
+                && BitConverter.ToUInt16(body, 2)
+                    == EventInfoBodyBuilder.RaidChannelEventIndex
+                && BitConverter.ToUInt32(body, 4) == 0x29209694u
+                && body[18] == 0,
+                ref failures);
+
+            var withEvent = EventInfoBodyBuilder.Build(new GameEventInfoSnapshot
             {
                 Events = new[]
                 {
@@ -339,10 +351,12 @@ namespace DfoServer.SelfTests
             });
 
             Check(
-                "EVENT_INFO body starts with count and joust event id",
-                BitConverter.ToUInt16(body, 0) == 1
-                && BitConverter.ToUInt16(body, 2) == JoustConfig.EventId
-                && body[body.Length - 1] == 0,
+                "EVENT_INFO appends enabled detail entries after raid placeholder",
+                BitConverter.ToUInt16(withEvent, 0) == 2
+                && BitConverter.ToUInt16(withEvent, 2)
+                    == EventInfoBodyBuilder.RaidChannelEventIndex
+                && BitConverter.ToUInt16(withEvent, 18) == JoustConfig.EventId
+                && withEvent[withEvent.Length - 1] == 0,
                 ref failures);
         }
 
