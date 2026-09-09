@@ -350,7 +350,7 @@ namespace DfoServer.Network.Handlers
             {
                 var nameBytes = session.Player?.Name;
                 if (nameBytes != null && nameBytes.Length > 0)
-                    masterName = Encoding.UTF8.GetString(nameBytes);
+                    masterName = ClientTextEncoding.GetString(nameBytes);
             }
             catch
             {
@@ -3611,7 +3611,7 @@ namespace DfoServer.Network.Handlers
             }
             try
             {
-                return Encoding.UTF8.GetString(body, 4, (int)nameLen);
+                return ClientTextEncoding.GetString(body, 4, (int)nameLen);
             }
             catch (Exception ex)
             {
