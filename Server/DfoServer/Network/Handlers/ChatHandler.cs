@@ -177,10 +177,7 @@ namespace DfoServer.Network.Handlers
                                 member.CharacterId,
                                 out var memberSession))
                         {
-                            AddIfCurrentChannel(
-                                result,
-                                sender,
-                                memberSession);
+                            AddIfOnline(result, memberSession);
                         }
                     }
                 }
@@ -208,9 +205,10 @@ namespace DfoServer.Network.Handlers
                     foreach (var member in guild.Members)
                     {
                         if (_sessions.TryGet(member.CharacterId, out var memberSession))
-                            AddIfCurrentChannel(result, sender, memberSession);
+                            AddIfOnline(result, memberSession);
                     }
                 }
+                return result.Values.ToList();
             }
 
             // Unknown modes deliberately remain sender-only.  Several values
