@@ -2000,6 +2000,14 @@ namespace DfoServer.Network.Handlers
                             .OrderBy(value => value)
                             .ToArray();
 
+                    // Town arrival/departure republishes discovery, but an
+                    // unchanged party list must not trigger another client UI
+                    // refresh (it closes the shop/disassembler window).
+                    if (priorPartyIds != null
+                        && removedPartyIds.Length == 0
+                        && priorPartyIds.SetEquals(currentPartyIds))
+                        continue;
+
                     var packet = GamePacketEnvelopeBuilder.Build(
                         0x00,
                         (ushort)NotiPacketTypeA21.PARTY_INFO,

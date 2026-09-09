@@ -480,16 +480,8 @@ namespace DfoServer.Network.Handlers
                     return;
             }
 
-            // 给每个已在场玩家只推【新人】的 subtype0 + 城镇定位。
-            // 旧玩家已经持有当前区域名册，0x0017 会增量插入新人；此处再发
-            // AREA_USERS 会触发客户端重建区域场景，并关闭商店、背包等当前窗口。
-            // 完整 AREA_USERS 只用于上面的进入者初始化和真正的离场名册对账。
-            var selfAppearance = GamePacketEnvelopeBuilder.Build(
-                0x00,
-                0x0002,
-                Game.Appearance.AppearanceService.BuildNoti2Body(
-                    session.Player,
-                    _database));
+            // 给每个已在场玩家只推【新人】的城镇定位。USERINFO0 不能广播给
+            // 其他人，客户端会把它当成自身状态并关闭当前交互窗口。
             var selfArea = BuildCoPresenceInsert(selfSnapshot);
             var peerProjections = new List<Task>(others.Count);
             foreach (var o in others)
@@ -501,15 +493,6 @@ namespace DfoServer.Network.Handlers
                 peerProjections.Add(SessionDirectory.TrySendBestEffortAsync(
                     async cancellationToken =>
                     {
-                        if (!CanContinueTownProjection(
-                                session,
-                                projectionGuard))
-                        {
-                            return;
-                        }
-                        await recipient.SendPacketAsync(
-                            selfAppearance,
-                            cancellationToken);
                         if (!CanContinueTownProjection(
                                 session,
                                 projectionGuard))
