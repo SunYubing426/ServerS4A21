@@ -1,5 +1,6 @@
 using DfoServer.Game.Inventory;
 using DfoServer.Network;
+using System;
 using System.Collections.Generic;
 
 namespace DfoServer.Network.Builders
@@ -15,13 +16,24 @@ namespace DfoServer.Network.Builders
             writer.WriteInt32(0);
             writer.WriteInt32(result.UpdatedCoin);
 
+            var protocolCount = ResolveProtocolCount(result, purchaseCountUpdates);
             if (result.CoreSnapshot != null && result.SlotIndex >= 0)
             {
                 ItemListProtocolWriter.WriteCommonEntry84(
                     writer,
                     result.SlotIndex,
                     result.CoreSnapshot,
-                    result.RequestedCount);
+                    protocolCount);
+            }
+            else if (result.SlotIndex >= 0
+                && result.ItemTemplateId > 0
+                && result.RemainingStackCount > 0)
+            {
+                ItemListProtocolWriter.WriteVirtualCountEntry84(
+                    writer,
+                    result.SlotIndex,
+                    result.ItemTemplateId,
+                    protocolCount);
             }
             else
             {
@@ -40,6 +52,29 @@ namespace DfoServer.Network.Builders
             }
 
             return writer.ToArray();
+        }
+
+        private static int ResolveProtocolCount(
+            InventoryMutationResult result,
+            List<PurchaseCountUpdate> purchaseCountUpdates)
+        {
+            if (result.RemainingStackCount <= 0)
+                return result.RequestedCount;
+
+            var purchaseCount = (int)result.RequestedCount;
+            if (purchaseCountUpdates != null)
+            {
+                foreach (var update in purchaseCountUpdates)
+                {
+                    if (update.ItemTemplateId == result.ItemTemplateId)
+                    {
+                        purchaseCount = update.RequestedCount;
+                        break;
+                    }
+                }
+            }
+
+            return Math.Max(0, result.RemainingStackCount - purchaseCount);
         }
 
         private static void WriteLegacyItemSummary(
