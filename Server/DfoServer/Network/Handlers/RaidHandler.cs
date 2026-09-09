@@ -357,6 +357,69 @@ public sealed partial class RaidHandler
 		return true;
 	}
 
+	public async Task<bool> HandleNormalPartyJoinedAsync(
+		IReadOnlyList<ushort> userIds)
+	{
+		if (userIds == null || userIds.Count == 0)
+			return false;
+
+		RaidSnapshot currentRaid = null;
+		foreach (var userId in userIds)
+		{
+			if (_raids.TryGetByUser(userId, out currentRaid))
+				break;
+		}
+		if (currentRaid == null)
+			return false;
+
+		var partyMembers = currentRaid.Members
+			.Where(member => userIds.Contains(member.UserId))
+			.ToArray();
+		if (partyMembers.Length == 0)
+			return false;
+
+		var partyIndex = partyMembers
+			.Select(member => member.PartyIndex)
+			.FirstOrDefault(index => index != 0);
+		if (partyIndex == 0)
+		{
+			for (ushort candidate = 1; candidate <= 10; candidate++)
+			{
+				if (currentRaid.Members.All(member => member.PartyIndex != candidate))
+				{
+					partyIndex = candidate;
+					break;
+				}
+			}
+		}
+		if (partyIndex == 0)
+			return false;
+
+		RaidSnapshot updatedRaid = currentRaid;
+		foreach (var member in partyMembers)
+		{
+			if (member.PartyIndex == partyIndex)
+				continue;
+			if (!_raids.TryAssignParty(
+					member.UserId,
+					member.UserId,
+					partyIndex,
+					out updatedRaid))
+				return false;
+		}
+
+		if (updatedRaid.AssignmentVersion == currentRaid.AssignmentVersion)
+			return true;
+
+		await BroadcastRaidObjectAsync(updatedRaid);
+		await BroadcastRaidMembersAsync(updatedRaid);
+		await BroadcastRaidMonsterStatusAsync(updatedRaid);
+		FileLogger.Log(
+			$"[GameProtocol] RAID_PARTY_ASSIGN raid={updatedRaid.RaidId} " +
+			$"partyIndex={partyIndex} users={string.Join(",", userIds)}");
+		return true;
+	}
+
 	public async Task HandleModifyRaidInfo(EnhancedClientSession session, GamePacketHeader header, byte[] body)
 	{
 		if (!TryResolveUserId(session, out var userId) || !TryReadTitle(body, out var titleBytes) || !_raids.TryUpdateTitle(userId, titleBytes, out var raid))

@@ -1936,6 +1936,13 @@ namespace DfoServer.Network.Handlers
                             $"(B={accepterUid})");
                     }
                 });
+            if (_raidHandler != null && joinMode != "raid-preparation")
+            {
+                await _raidHandler.HandleNormalPartyJoinedAsync(
+                    party.MembersBySlot()
+                        .Select(member => member.UserId)
+                        .ToArray());
+            }
             await PublishTownPartyListsAsync();
         }
         // 按 UserId 找在线会话。
