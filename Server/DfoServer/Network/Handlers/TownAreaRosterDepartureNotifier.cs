@@ -19,8 +19,8 @@ namespace DfoServer.Network.Handlers
     ///
     /// env DFO_AREA_LEAVE_NOTIFY 三档：
     ///   0 = 不通知（保持旧行为，残留白影仍会残留）
-    ///   1（默认）= 名册对账：向旧区域广播不含离开者的 AREA_USERS(0x0018)
-    ///   2 = 位置迁移备选：向旧区域广播 USER_AREA(0x0017) 离开者当前投影（仅诊断用）
+    ///   1 = 名册对账：向旧区域广播不含离开者的 AREA_USERS(0x0018)
+    ///   2（默认）= 位置迁移：向旧区域广播 USER_AREA(0x0017) 离开者当前投影
     /// ⚠️不要向旧区域广播 USER_LEAVE(0x0006)：会销毁队伍成员对象、组队进本时队友客户端闪退。
     /// </summary>
     internal static class TownAreaRosterDepartureNotifier
@@ -80,6 +80,6 @@ namespace DfoServer.Network.Handlers
         private const string ProtocolName = "AreaRoster";
 
         private static readonly int _areaLeaveNotifyMode =
-            int.TryParse(System.Environment.GetEnvironmentVariable("DFO_AREA_LEAVE_NOTIFY"), out var alm) ? alm : 1;
+            int.TryParse(System.Environment.GetEnvironmentVariable("DFO_AREA_LEAVE_NOTIFY"), out var alm) ? alm : 2;
     }
 }
