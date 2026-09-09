@@ -99,7 +99,7 @@ public sealed partial class RaidHandler
 		// this operation=3 cache to build situation rows after entering a dungeon.
 		await BroadcastRaidObjectAsync(started);
 		await BroadcastRaidMembersAsync(started);
-		await BroadcastRaidNotificationAsync(started, NotiPacketType.RAID_DUNGEON_STATE, RaidPacketBuilder.BuildDungeonState(AntonFirstPhaseInitialDungeonStates));
+		await SendRaidDungeonStateAsync(started, AntonFirstPhaseInitialDungeonStates);
 		await BroadcastRaidSituationAsync(started);
 		await BroadcastRaidNotificationAsync(started, NotiPacketType.RAID_SET_SYMBOL, RaidPacketBuilder.BuildSetSymbols(AntonFirstPhaseInitialSymbols));
 		await BroadcastRaidNotificationAsync(started, NotiPacketType.RAID_SET_TIMER, RaidPacketBuilder.BuildSetTimer(0u, 0u, AttackSeconds));
@@ -173,7 +173,7 @@ public sealed partial class RaidHandler
 		await BroadcastRaidStateAsync(started);
 		_blackVolcanoBarrierBroken[started.RaidId] = 0;
 		await SetSymbolsAsync(started, AntonSecondPhaseInitialSymbols);
-		await BroadcastRaidNotificationAsync(started, NotiPacketType.RAID_DUNGEON_STATE, RaidPacketBuilder.BuildDungeonState(AntonSecondPhaseInitialDungeonStates));
+		await SendRaidDungeonStateAsync(started, AntonSecondPhaseInitialDungeonStates);
 		await BroadcastRaidSituationAsync(started);
 		await PulseSymbolAsync(started, 127u);
 		await BroadcastRaidNotificationAsync(started, NotiPacketType.RAID_SET_TIMER, RaidPacketBuilder.BuildSetTimer(0u, 0u, AttackSeconds));
@@ -521,7 +521,10 @@ public sealed partial class RaidHandler
 			{
 				new KeyValuePair<uint, uint>(7u, 0u)
 			});
-			await BroadcastRaidNotificationAsync(raid, NotiPacketType.RAID_DUNGEON_STATE, RaidPacketBuilder.BuildDungeonState(dungeonId, 3u, infectionDungeonId));
+			await SendRaidDungeonStateAsync(
+				raid,
+				new[] { new KeyValuePair<uint, uint>(dungeonId, 3u) },
+				infectionDungeonId);
 		}
 		await SetSymbolsAsync(raid, new KeyValuePair<uint, uint>[2]
 		{
@@ -684,7 +687,12 @@ public sealed partial class RaidHandler
 				_symbolValues[(current.RaidId, 7u)] = 1u;
 				_symbolValues[(current.RaidId, 8u)] = infectionDungeonId;
 				await SetSymbolAsync(current, 128u, 1u);
-				await BroadcastRaidNotificationAsync(current, NotiPacketType.RAID_DUNGEON_STATE, RaidPacketBuilder.BuildDungeonState(openHatcheries.Select((uint id) => new KeyValuePair<uint, uint>(id, 0u)).ToArray(), infectionDungeonId));
+				await SendRaidDungeonStateAsync(
+					current,
+					openHatcheries
+						.Select(id => new KeyValuePair<uint, uint>(id, 0u))
+						.ToArray(),
+					infectionDungeonId);
 				uint[] array = openHatcheries;
 				for (int num = 0; num < array.Length; num++)
 				{
@@ -782,7 +790,10 @@ public sealed partial class RaidHandler
 				else
 				{
 					await SetSymbolAsync(current, 7u, 1u);
-					await BroadcastRaidNotificationAsync(current, NotiPacketType.RAID_DUNGEON_STATE, RaidPacketBuilder.BuildDungeonState(dungeonId, 0u, infectionDungeonId));
+					await SendRaidDungeonStateAsync(
+						current,
+						new[] { new KeyValuePair<uint, uint>(dungeonId, 0u) },
+						infectionDungeonId);
 				}
 				await StartHatcheryEffectTimersAsync(current, dungeonId);
 			}

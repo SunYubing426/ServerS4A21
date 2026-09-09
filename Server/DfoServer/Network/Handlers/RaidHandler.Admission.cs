@@ -399,7 +399,10 @@ public sealed partial class RaidHandler
 			_objectSent[session.SessionId] = 0;
 			await SendRaidObjectAsync(session, raid);
 		}
-		await ResendRaidStateToSessionAsync(session, raid);
+		await ResendRaidStateToSessionAsync(
+			session,
+			raid,
+			includeState: false);
 		FileLogger.Log($"[GameProtocol] RAID_REQUEST_MEMBERS raid={raid.RaidId} user={userId} body={BitConverter.ToString(body ?? Array.Empty<byte>())}");
 	}
 
@@ -477,7 +480,10 @@ public sealed partial class RaidHandler
 		FileLogger.Log($"[GameProtocol] RAID_OTHER_CHANNEL_LIST channel={channelId} body={BitConverter.ToString(body ?? Array.Empty<byte>())}");
 	}
 
-	private async Task ResendRaidStateToSessionAsync(EnhancedClientSession session, RaidSnapshot raid)
+	private async Task ResendRaidStateToSessionAsync(
+		EnhancedClientSession session,
+		RaidSnapshot raid,
+		bool includeState = true)
 	{
 		IReadOnlyList<RaidMemberSnapshot> members = ToPacketMembers(raid);
 		await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
@@ -487,7 +493,7 @@ public sealed partial class RaidHandler
 		// PartyIndex is already in the compact RAID_MODIFY member record.
 		// Current A21 RAID_WAITING_LIST is not a party-assignment packet.
 		await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(0, 599, RaidPacketBuilder.BuildEntryCostInfo(BuildEntryCostStatuses(raid))));
-		if (raid.State != 0)
+		if (includeState && raid.State != 0)
 		{
 			if (raid.State == 4 && raid.StateArgument == 1)
 				await session.SendPacketAsync(BuildFailedRaidResultPacket(raid));
@@ -507,6 +513,44 @@ public sealed partial class RaidHandler
 					0,
 					(ushort)NotiPacketType.RAID_REMAIN_TIME,
 					RaidPacketBuilder.BuildRemainTime(0, remainingSeconds)));
+				if (_raidDungeonStates.TryGetValue(
+						raid.RaidId,
+						out var dungeonStateCache)
+					&& !dungeonStateCache.IsEmpty)
+				{
+					var dungeonStates = dungeonStateCache
+						.OrderBy(entry => entry.Key)
+						.Select(entry => new KeyValuePair<uint, uint>(
+							entry.Key,
+							entry.Value))
+						.ToArray();
+					var infectionDungeonId =
+						_symbolValues.TryGetValue(
+							(raid.RaidId,
+								AntonInfectionDungeonIndexSymbolId),
+							out var infection)
+							? infection
+							: 0u;
+					await session.SendPacketAsync(
+						GamePacketEnvelopeBuilder.Build(
+							0,
+							(ushort)NotiPacketType.RAID_DUNGEON_STATE,
+							RaidPacketBuilder.BuildDungeonState(
+								dungeonStates,
+								infectionDungeonId)));
+				}
+				else
+				{
+					var initialStates = raid.PhaseIndex == 0
+						? AntonFirstPhaseInitialDungeonStates
+						: AntonSecondPhaseInitialDungeonStates;
+					await session.SendPacketAsync(
+						GamePacketEnvelopeBuilder.Build(
+							0,
+							(ushort)NotiPacketType.RAID_DUNGEON_STATE,
+							RaidPacketBuilder.BuildDungeonState(
+								initialStates)));
+				}
 			}
 			else if (raid.State == 3)
 			{
