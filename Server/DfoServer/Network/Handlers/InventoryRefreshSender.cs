@@ -252,6 +252,12 @@ namespace DfoServer.Network.Handlers
 
         public Task SendGoldUpdate(EnhancedClientSession session, int updatedGold)
         {
+            SyncGoldToMemory(session, updatedGold);
+            return SendGoldUpdate(session);
+        }
+
+        public void SyncGoldToMemory(EnhancedClientSession session, int updatedGold)
+        {
             var (cid, _) = SessionOwnerResolver.Resolve(session);
             if (InventoryContext.TryGetLease(cid, out var lease)
                 && lease.IsOwnedBy(session.SessionId))
@@ -261,8 +267,6 @@ namespace DfoServer.Network.Handlers
                         InventoryService.MainVirtualCurrencySlotStart,
                         Math.Max(0, updatedGold));
             }
-
-            return SendGoldUpdate(session);
         }
 
         public async Task SendUpdateItemList(EnhancedClientSession session, InventoryListType itemSpace, IEnumerable<short> slotIndexes)
