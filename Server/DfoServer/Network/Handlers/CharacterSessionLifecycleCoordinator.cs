@@ -209,10 +209,18 @@ namespace DfoServer.Network.Handlers
 
                             try
                             {
-                                DungeonRunLifecycle.EndRunOnTeardown(
-                                    session,
-                                    "disconnect",
-                                    _dungeonInstances);
+                                var detachedForRejoin =
+                                    DungeonRunLifecycle
+                                        .DetachRunOnNetworkDisconnect(
+                                            session,
+                                            _dungeonInstances);
+                                if (!detachedForRejoin)
+                                {
+                                    DungeonRunLifecycle.EndRunOnTeardown(
+                                        session,
+                                        "disconnect",
+                                        _dungeonInstances);
+                                }
                             }
                             catch (Exception ex)
                             {
@@ -1057,10 +1065,17 @@ namespace DfoServer.Network.Handlers
                 source: "select-displaced");
             try
             {
-                DungeonRunLifecycle.EndRunOnTeardown(
-                    displaced,
-                    "select-displaced",
-                    _dungeonInstances);
+                var detachedForRejoin =
+                    DungeonRunLifecycle.DetachRunOnNetworkDisconnect(
+                        displaced,
+                        _dungeonInstances);
+                if (!detachedForRejoin)
+                {
+                    DungeonRunLifecycle.EndRunOnTeardown(
+                        displaced,
+                        "select-displaced",
+                        _dungeonInstances);
+                }
             }
             catch (Exception ex)
             {
