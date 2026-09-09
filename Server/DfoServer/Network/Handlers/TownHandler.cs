@@ -480,8 +480,15 @@ namespace DfoServer.Network.Handlers
                     return;
             }
 
-            // 给每个已在场玩家只推【新人】的城镇定位。USERINFO0 不能广播给
-            // 其他人，客户端会把它当成自身状态并关闭当前交互窗口。
+            // 给每个已在场玩家补新人的远程 USERINFO0 + 城镇定位。远程路由
+            // 字节必须置 1，否则客户端会把他人资料当成自身状态并关闭窗口。
+            var selfAppearance = GamePacketEnvelopeBuilder.Build(
+                0x00,
+                0x0002,
+                Game.Appearance.AppearanceService.BuildNoti2Body(
+                    session.Player,
+                    _database));
+            selfAppearance[7] = 1;
             var selfArea = BuildCoPresenceInsert(selfSnapshot);
             var peerProjections = new List<Task>(others.Count);
             foreach (var o in others)
@@ -493,6 +500,15 @@ namespace DfoServer.Network.Handlers
                 peerProjections.Add(SessionDirectory.TrySendBestEffortAsync(
                     async cancellationToken =>
                     {
+                        if (!CanContinueTownProjection(
+                                session,
+                                projectionGuard))
+                        {
+                            return;
+                        }
+                        await recipient.SendPacketAsync(
+                            selfAppearance,
+                            cancellationToken);
                         if (!CanContinueTownProjection(
                                 session,
                                 projectionGuard))

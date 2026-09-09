@@ -493,6 +493,33 @@ public sealed partial class RaidHandler
 				await session.SendPacketAsync(BuildFailedRaidResultPacket(raid));
 			else
 				await SendRaidStateValueAsync(session, raid.State, raid.StateArgument);
+			if (raid.State == 2
+				&& _raids.TryGetAttackRemainingSeconds(
+					raid.RaidId,
+					AttackSeconds,
+					out var remainingSeconds))
+			{
+				await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
+					0,
+					(ushort)NotiPacketType.RAID_SET_TIMER,
+					RaidPacketBuilder.BuildSetTimer(0u, 0u, remainingSeconds)));
+				await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
+					0,
+					(ushort)NotiPacketType.RAID_REMAIN_TIME,
+					RaidPacketBuilder.BuildRemainTime(0, remainingSeconds)));
+			}
+			else if (raid.State == 3)
+			{
+				var remainingBreakSeconds = GetAntonPhaseBreakRemainingSeconds();
+				await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
+					0,
+					(ushort)NotiPacketType.RAID_SET_TIMER,
+					RaidPacketBuilder.BuildSetTimer(0u, 0u, remainingBreakSeconds)));
+				await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
+					0,
+					(ushort)NotiPacketType.RAID_REMAIN_TIME,
+					RaidPacketBuilder.BuildRemainTime(1, remainingBreakSeconds)));
+			}
 			await SendRaidBuffStatusAsync(session, raid.RaidId);
 			await SendRaidMonsterStatusAsync(session, raid);
 		}

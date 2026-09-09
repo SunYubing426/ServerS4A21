@@ -850,6 +850,34 @@ namespace DfoServer.Game.Raid
                 return true;
             }
         }
+
+        public bool TryGetAttackRemainingSeconds(
+            uint raidId,
+            uint baseDurationSeconds,
+            out uint remainingSeconds)
+        {
+            lock (_lock)
+            {
+                remainingSeconds = 0;
+                if (!_raids.TryGetValue(raidId, out var aggregate)
+                    || aggregate.State != 2
+                    || aggregate.PhaseStartedAtMilliseconds < 0)
+                {
+                    return false;
+                }
+
+                var elapsedSeconds = (ulong)(Math.Max(
+                    0L,
+                    _clockMilliseconds() - aggregate.PhaseStartedAtMilliseconds) / 1000L);
+                var totalSeconds = (ulong)baseDurationSeconds
+                    + aggregate.PhaseTimeExtensionSeconds;
+                remainingSeconds = totalSeconds > elapsedSeconds
+                    ? checked((uint)(totalSeconds - elapsedSeconds))
+                    : 0u;
+                return true;
+            }
+        }
+
         public bool TryEnterPhaseBreak(uint raidId, out RaidSnapshot raid)
         {
             lock (_lock)
