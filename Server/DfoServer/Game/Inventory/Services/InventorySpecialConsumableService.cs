@@ -178,8 +178,14 @@ namespace DfoServer.Game.Inventory
                 if (validRewards.Count == 0)
                     return false;
 
-                var triggeredDouble = isSeriaLuckValueSource
-                    && seriaLuckValue >= SqliteAccountRepository.SeriaLuckValueMax;
+                var nextSeriaLuckValue = seriaLuckValue;
+                var triggeredDouble = false;
+                if (isSeriaLuckValueSource)
+                {
+                    nextSeriaLuckValue = AdvanceSeriaLuckValue(
+                        seriaLuckValue,
+                        out triggeredDouble);
+                }
                 if (isSeriaLuckValueSource)
                 {
                     FileLogger.Log(
@@ -191,20 +197,17 @@ namespace DfoServer.Game.Inventory
 
                 AddRewardEntries(displayRewardEntries, validRewards);
                 if (triggeredDouble)
-                {
                     AddRewardEntries(doubleRewardEntries, validRewards);
-                    seriaLuckValue = 0;
-                }
 
                 if (!isSeriaLuckValueSource)
                     continue;
 
-                seriaLuckValue = Math.Min(SqliteAccountRepository.SeriaLuckValueMax, seriaLuckValue + 1);
+                seriaLuckValue = nextSeriaLuckValue;
             }
 
-            var rewardsToGrant = new List<PvfLib.BoosterRewardEntry>();
-            AddRewardEntries(rewardsToGrant, displayRewardEntries);
-            AddRewardEntries(rewardsToGrant, doubleRewardEntries, countMultiplier: 2);
+            var rewardsToGrant = BuildSeriaLuckRewardsToGrant(
+                displayRewardEntries,
+                doubleRewardEntries);
             var rewardRequests = BuildRewardRequests(rewardsToGrant);
             if (isSeriaLuckValueSource)
             {
@@ -1413,13 +1416,11 @@ namespace DfoServer.Game.Inventory
 
         private static void AddRewardEntries(
             List<PvfLib.BoosterRewardEntry> target,
-            IEnumerable<PvfLib.BoosterRewardEntry> rewards,
-            int countMultiplier = 1)
+            IEnumerable<PvfLib.BoosterRewardEntry> rewards)
         {
             if (target == null || rewards == null)
                 return;
 
-            countMultiplier = Math.Max(1, countMultiplier);
             foreach (var reward in rewards)
             {
                 if (reward == null || reward.ItemId <= 0 || reward.Count <= 0)
@@ -1428,7 +1429,7 @@ namespace DfoServer.Game.Inventory
                 target.Add(new PvfLib.BoosterRewardEntry
                 {
                     ItemId = reward.ItemId,
-                    Count = Math.Max(1, reward.Count) * countMultiplier,
+                    Count = Math.Max(1, reward.Count),
                     Weight = reward.Weight,
                     Group = reward.Group,
                     DrawCount = reward.DrawCount,
@@ -1436,6 +1437,31 @@ namespace DfoServer.Game.Inventory
                     UsablePeriodDays = reward.UsablePeriodDays,
                 });
             }
+        }
+
+        internal static List<PvfLib.BoosterRewardEntry> BuildSeriaLuckRewardsToGrant(
+            IEnumerable<PvfLib.BoosterRewardEntry> displayRewards,
+            IEnumerable<PvfLib.BoosterRewardEntry> doubleRewards)
+        {
+            var rewardsToGrant = new List<PvfLib.BoosterRewardEntry>();
+            AddRewardEntries(rewardsToGrant, displayRewards);
+            AddRewardEntries(rewardsToGrant, doubleRewards);
+            return rewardsToGrant;
+        }
+
+        internal static int AdvanceSeriaLuckValue(
+            int currentValue,
+            out bool triggeredDouble)
+        {
+            var normalized = SqliteAccountRepository.NormalizeSeriaLuckValue(
+                currentValue);
+            triggeredDouble = normalized >= SqliteAccountRepository.SeriaLuckValueMax;
+            if (triggeredDouble)
+                return 0;
+
+            return Math.Min(
+                SqliteAccountRepository.SeriaLuckValueMax,
+                normalized + 1);
         }
 
         private static string FormatRewardEntryList(IEnumerable<PvfLib.BoosterRewardEntry> rewards)

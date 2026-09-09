@@ -58,6 +58,7 @@ namespace DfoServer.Game.SelectCharacter
             Raw(0x00, (ushort)NotiPacketTypeA21.USERINFO, 3);
             Raw(0x00, 0x01C7);
             Raw(0x00, 0x006C);
+            Raw(0x00, (ushort)NotiPacketTypeA21.BOOSTER_GAGE);
             Raw(0x00, 0x0187);
             Raw(0x00, 0x01B9);
             Raw(0x00, 0x015F);                      

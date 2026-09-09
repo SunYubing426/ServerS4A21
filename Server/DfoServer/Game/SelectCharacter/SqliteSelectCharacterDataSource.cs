@@ -323,6 +323,11 @@ namespace DfoServer.Game.SelectCharacter
                 conn.Open();
                 var wallet = CurrencyService.LoadWallet(conn, null, characterId);
                 ApplyWallet(initSnapshot, wallet);
+                initSnapshot.SeriaLuckValue =
+                    SqliteAccountRepository.LoadSeriaLuckValue(
+                        conn,
+                        transaction: null,
+                        accountId);
             }
 
             var acctSettings = _accountSettingsRepository.Load(accountId);
