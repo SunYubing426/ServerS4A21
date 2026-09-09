@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using DfoServer.Game.Raid;
 using DfoServer.Network.Builders;
@@ -9,6 +11,10 @@ namespace DfoServer.Network.Handlers;
 
 public sealed partial class RaidHandler
 {
+	private readonly ConcurrentDictionary<uint, ConcurrentDictionary<uint, uint>>
+		_raidDungeonStates =
+			new ConcurrentDictionary<uint, ConcurrentDictionary<uint, uint>>();
+
 	private async Task StartRecoveryTimerAsync(RaidSnapshot raid, uint dungeonId, uint recovery, uint active, Func<RaidSnapshot, Task> timeout)
 	{
 		var version = AdvanceTimer(raid.RaidId, 2u, dungeonId);
@@ -125,7 +131,35 @@ public sealed partial class RaidHandler
 
 	private Task SetDungeonStateAsync(RaidSnapshot raid, uint dungeonId, uint state)
 	{
-		return BroadcastRaidNotificationAsync(raid, NotiPacketType.RAID_CHANGE_DUNGEON_STATE, RaidPacketBuilder.BuildChangeDungeonState(dungeonId, state));
+		return SendRaidDungeonStateAsync(
+			raid,
+			new[] { new KeyValuePair<uint, uint>(dungeonId, state) });
+	}
+
+	private Task SendRaidDungeonStateAsync(
+		RaidSnapshot raid,
+		IReadOnlyList<KeyValuePair<uint, uint>> dungeonStates,
+		uint infectionDungeonId = 0)
+	{
+		if (raid == null || dungeonStates == null)
+			throw new ArgumentNullException(
+				raid == null ? nameof(raid) : nameof(dungeonStates));
+
+		var cache = _raidDungeonStates.GetOrAdd(
+			raid.RaidId,
+			_ => new ConcurrentDictionary<uint, uint>());
+		foreach (var dungeonState in dungeonStates)
+			cache[dungeonState.Key] = dungeonState.Value;
+		if (infectionDungeonId != 0)
+			_symbolValues[(raid.RaidId, AntonInfectionDungeonIndexSymbolId)] =
+				infectionDungeonId;
+
+		return BroadcastRaidNotificationAsync(
+			raid,
+			NotiPacketType.RAID_DUNGEON_STATE,
+			RaidPacketBuilder.BuildDungeonState(
+				dungeonStates,
+				infectionDungeonId));
 	}
 
 	private Task SetSymbolAsync(RaidSnapshot raid, uint symbolId, uint value)
@@ -270,6 +304,7 @@ public sealed partial class RaidHandler
 		_phaseRewardFlows.TryRemove(raidId, out var _);
 		_infectionDungeonByRaid.TryRemove(raidId, out var value2);
 		_blackVolcanoBarrierBroken.TryRemove(raidId, out var _);
+		_raidDungeonStates.TryRemove(raidId, out var _);
 		_raidRuntimeLocks.TryRemove(raidId, out var _);
 		foreach (var key in _raidBuffActivations.Keys)
 		{
