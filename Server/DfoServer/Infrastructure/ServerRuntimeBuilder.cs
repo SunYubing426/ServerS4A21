@@ -654,6 +654,7 @@ namespace DfoServer.Infrastructure
                 core.CharacterRepository,
                 world.Sessions,
                 world.RaidManager);
+            party.AttachRaidHandler(raid);
             var chat = new ChatHandler(
                 world.Sessions,
                 world.PartyManager);
@@ -817,6 +818,12 @@ namespace DfoServer.Infrastructure
                 new Game.Auction.AuctionRepository(core.Database),
                 inventory.MailboxService);
             auctionService.RegisterClock(ClockService.Instance);
+            var auctionBotService = new Game.Auction.AuctionBotService(
+                auctionService.Repository,
+                auctionService);
+            auctionService.BotSaleSettledHook =
+                auctionBotService.NotifyBotSaleSettled;
+            auctionBotService.RegisterClock(ClockService.Instance);
             var auctionHandler = new AuctionHandler(
                 auctionService,
                 inventory.InventoryRefreshSender);

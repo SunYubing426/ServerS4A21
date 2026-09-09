@@ -16,6 +16,7 @@ namespace DfoServer.Game.Raid
     public sealed class RaidManager
     {
         private readonly object _lock = new object();
+        private long _nextPreparationGeneration;
         private readonly Dictionary<uint, RaidAggregate> _raids = new Dictionary<uint, RaidAggregate>();
         private readonly Dictionary<ushort, uint> _userToRaid = new Dictionary<ushort, uint>();
         private readonly Dictionary<Guid, ushort> _sessionToUser = new Dictionary<Guid, ushort>();
@@ -25,6 +26,8 @@ namespace DfoServer.Game.Raid
             new Dictionary<uint, Dictionary<uint, uint>>();
         private readonly Dictionary<uint, HashSet<ushort>> _clearParticipants =
             new Dictionary<uint, HashSet<ushort>>();
+        private readonly Dictionary<int, List<RaidMember>> _channelWaiting =
+            new Dictionary<int, List<RaidMember>>();
         private readonly Func<long> _clockMilliseconds;
 
         public RaidManager()
@@ -37,7 +40,7 @@ namespace DfoServer.Game.Raid
             _clockMilliseconds = clockMilliseconds ?? throw new ArgumentNullException(nameof(clockMilliseconds));
         }
 
-        public RaidSnapshot Create(byte[] titleBytes, RaidMember leader)
+        public RaidSnapshot Create(byte[] titleBytes, RaidMember leader, int channelId)
         {
             if (leader == null)
                 throw new ArgumentNullException(nameof(leader));
@@ -45,7 +48,12 @@ namespace DfoServer.Game.Raid
             lock (_lock)
             {
                 LeaveLocked(leader.UserId);
-                var raidId = AllocateRaidId(leader.CharacterId);
+                // A21 client hard requirement (verified on-machine 2026-09-04):
+                // the RAID_MODIFY handler rejects objects whose raid key high
+                // word does not equal the raid channel id held in the client's
+                // secure global (200/201). The key must be
+                // (channelId << 16) | characterId.
+                var raidId = AllocateRaidId(((uint)channelId << 16) | leader.CharacterId);
                 var raid = new RaidAggregate(raidId, (byte[])(titleBytes ?? Array.Empty<byte>()).Clone(), leader.Clone());
                 _raids.Add(raidId, raid);
                 _userToRaid[leader.UserId] = raidId;
@@ -65,6 +73,153 @@ namespace DfoServer.Game.Raid
                 }
                 raid = null;
                 return false;
+            }
+        }
+
+        public bool TryFindRecruitingRaid(int channelId, out RaidSnapshot raid)
+        {
+            lock (_lock)
+            {
+                foreach (var aggregate in _raids.Values)
+                {
+                    if (aggregate.State == 0 && (int)(aggregate.RaidId >> 16) == channelId)
+                    {
+                        raid = aggregate.Snapshot();
+                        return true;
+                    }
+                }
+                raid = null;
+                return false;
+            }
+        }
+
+        public bool TryGetByMemberCharacterId(uint characterId, out RaidSnapshot raid)
+        {
+            lock (_lock)
+            {
+                foreach (var aggregate in _raids.Values)
+                {
+                    if (aggregate.Members.Any(member => member.CharacterId == characterId))
+                    {
+                        raid = aggregate.Snapshot();
+                        return true;
+                    }
+                }
+                raid = null;
+                return false;
+            }
+        }
+
+        public IReadOnlyList<RaidSnapshot> ListRaidsByChannel(int channelId)
+        {
+            lock (_lock)
+            {
+                var result = new List<RaidSnapshot>();
+                foreach (var aggregate in _raids.Values)
+                {
+                    if ((int)(aggregate.RaidId >> 16) == channelId)
+                        result.Add(aggregate.Snapshot());
+                }
+                return result;
+            }
+        }
+
+        // Channel-level waiting pool ("待命目录"): players who clicked 待命/参加
+        // but have not been invited into a raid yet.
+        public bool TryAddWaiting(int channelId, RaidMember member)
+        {
+            if (member == null)
+                throw new ArgumentNullException(nameof(member));
+
+            lock (_lock)
+            {
+                RemoveWaitingLocked(member.UserId);
+                if (!_channelWaiting.TryGetValue(channelId, out var list))
+                {
+                    list = new List<RaidMember>();
+                    _channelWaiting.Add(channelId, list);
+                }
+                list.Add(member.Clone());
+                return true;
+            }
+        }
+
+        public bool TryRemoveWaiting(ushort userId)
+        {
+            lock (_lock)
+            {
+                return RemoveWaitingLocked(userId);
+            }
+        }
+
+        private bool RemoveWaitingLocked(ushort userId)
+        {
+            var removed = false;
+            foreach (var list in _channelWaiting.Values)
+            {
+                for (var i = list.Count - 1; i >= 0; i--)
+                {
+                    if (list[i].UserId == userId)
+                    {
+                        list.RemoveAt(i);
+                        removed = true;
+                    }
+                }
+            }
+            return removed;
+        }
+
+        public IReadOnlyList<RaidMember> GetWaitingList(int channelId)
+        {
+            lock (_lock)
+            {
+                if (!_channelWaiting.TryGetValue(channelId, out var list) || list.Count == 0)
+                    return Array.Empty<RaidMember>();
+                var result = new List<RaidMember>(list.Count);
+                foreach (var member in list)
+                    result.Add(member.Clone());
+                return result;
+            }
+        }
+
+        public bool TryAddMember(uint raidId, RaidMember member, out RaidSnapshot raid)
+        {
+            if (member == null)
+                throw new ArgumentNullException(nameof(member));
+
+            lock (_lock)
+            {
+                raid = null;
+                if (!_raids.TryGetValue(raidId, out var aggregate)
+                    || aggregate.State != 0
+                    || aggregate.GetMember(member.UserId) != null)
+                {
+                    return false;
+                }
+
+                LeaveLocked(member.UserId);
+                if (!aggregate.AddMember(member.Clone()))
+                    return false;
+                _userToRaid[member.UserId] = raidId;
+                _sessionToUser[member.SessionId] = member.UserId;
+                raid = aggregate.Snapshot();
+                return true;
+            }
+        }
+
+        public bool RebindSession(ushort userId, Guid sessionId)
+        {
+            lock (_lock)
+            {
+                if (!TryGetAggregate(userId, out var aggregate))
+                    return false;
+                var member = aggregate.GetMember(userId);
+                if (member == null)
+                    return false;
+                _sessionToUser.Remove(member.SessionId);
+                member.SessionId = sessionId;
+                _sessionToUser[sessionId] = userId;
+                return true;
             }
         }
 
@@ -106,8 +261,36 @@ namespace DfoServer.Game.Raid
                     raid = null;
                     return false;
                 }
+                if (member.PartyIndex != partyIndex) aggregate.AssignmentVersion = Guid.NewGuid();
                 member.PartyIndex = (ushort)partyIndex;
                 raid = aggregate.Snapshot();
+                return true;
+            }
+        }
+
+        internal bool TryAssignLiveParty(RaidSnapshot expected, ushort actor, Guid actorSession,
+            ushort target, uint index, Func<IReadOnlyList<RaidMember>, bool> commit, out RaidSnapshot raid)
+        {
+            lock (_lock)
+            {
+                raid = null;
+                if (expected == null || commit == null || index > 10
+                    || !TryGetAggregate(actor, out var current)
+                    || current.InstanceId != expected.InstanceId || current.AssignmentVersion != expected.AssignmentVersion
+                    || current.LeaderUserId != actor
+                    || current.GetMember(actor)?.SessionId != actorSession || current.StartPending
+                    || (current.State != 2 && current.State != 5)
+                    || current.State != expected.State || current.PhaseIndex != expected.PhaseIndex
+                    || current.Members.Count != expected.Members.Count
+                    || !expected.Members.All(e => current.Members.Any(m => m.UserId == e.UserId
+                        && m.SessionId == e.SessionId && m.PartyIndex == e.PartyIndex))) return false;
+                var member = current.GetMember(target);
+                if (member == null || (index != 0 && current.Members.Count(m => m.UserId != target && m.PartyIndex == index) >= 4))
+                    return false;
+                if (!commit(current.Snapshot().Members)) return false;
+                if (member.PartyIndex != index) current.AssignmentVersion = Guid.NewGuid();
+                member.PartyIndex = (ushort)index;
+                raid = current.Snapshot();
                 return true;
             }
         }
@@ -125,9 +308,77 @@ namespace DfoServer.Game.Raid
                     return false;
                 }
 
-                aggregate.StartPending = true;
+                BeginPreparationLocked(aggregate);
                 raid = aggregate.Snapshot();
                 return true;
+            }
+        }
+
+        private static bool PreparationIsCurrent(RaidAggregate aggregate)
+            => aggregate.StartPending && (aggregate.State == 0
+                || (aggregate.State == 5 && aggregate.StateArgument == 0 && aggregate.PhaseIndex == 0))
+               && aggregate.Members.Count == aggregate.PreparationMembers.Count
+               && aggregate.PreparationMembers.All(saved => aggregate.Members.Any(current =>
+                   current.UserId == saved.UserId && current.SessionId == saved.SessionId
+                   && current.PartyIndex == saved.PartyIndex));
+
+        // Called inside the existing character-pair transition guard. Lock order:
+        // character transitions -> RaidManager -> PartyManager; no await or send.
+        public bool TryCommitPreparationResponse(ushort leaderId, Guid leaderSession,
+            ushort memberId, Guid memberSession, Func<IReadOnlyList<RaidMember>, bool> commit)
+        {
+            lock (_lock)
+            {
+                if (!TryGetAggregate(memberId, out var aggregate) || !PreparationIsCurrent(aggregate)
+                    || aggregate.PreparationResponses.Contains(memberId)) return false;
+                var member = aggregate.PreparationMembers.FirstOrDefault(x => x.UserId == memberId);
+                if (member == null || member.SessionId != memberSession || member.PartyIndex == 0) return false;
+                var group = aggregate.PreparationMembers.Where(x => x.PartyIndex == member.PartyIndex).ToArray();
+                if (group.Length < 2 || group.Length > 4 || group[0].UserId != leaderId
+                    || group[0].SessionId != leaderSession || leaderId == memberId) return false;
+                // Consume once even if PartyManager rejects; require a fresh preparation.
+                aggregate.PreparationResponses.Add(memberId);
+                return commit(group);
+            }
+        }
+
+        public bool IsPreparationReady(RaidSnapshot expected, Func<IReadOnlyList<RaidMember>, bool> partiesReady)
+        {
+            lock (_lock)
+            {
+                return _raids.TryGetValue(expected.RaidId, out var aggregate)
+                    && aggregate.InstanceId == expected.InstanceId
+                    && aggregate.PreparationGeneration == expected.PreparationGeneration
+                    && PreparationIsCurrent(aggregate) && partiesReady(aggregate.PreparationMembers);
+            }
+        }
+
+        public bool TryCancelPreparation(RaidSnapshot expected, out RaidSnapshot raid)
+        {
+            lock (_lock)
+            {
+                raid = null;
+                if (!_raids.TryGetValue(expected.RaidId, out var aggregate)
+                    || aggregate.InstanceId != expected.InstanceId
+                    || aggregate.PreparationGeneration != expected.PreparationGeneration
+                    || !aggregate.StartPending || aggregate.State != expected.State)
+                    return false;
+                aggregate.StartPending = false;
+                raid = aggregate.Snapshot();
+                return true;
+            }
+        }
+
+        public bool TryCompletePreparation(RaidSnapshot expected, out RaidSnapshot raid)
+        {
+            lock (_lock)
+            {
+                raid = null;
+                return _raids.TryGetValue(expected.RaidId, out var aggregate)
+                    && aggregate.InstanceId == expected.InstanceId
+                    && aggregate.PreparationGeneration == expected.PreparationGeneration
+                    && PreparationIsCurrent(aggregate)
+                    && TryCompleteStart(expected.RaidId, expected.LeaderUserId, out raid);
             }
         }
 
@@ -659,6 +910,29 @@ namespace DfoServer.Game.Raid
             }
         }
 
+        internal bool TryEnterPhaseBreak(RaidSnapshot expected, out RaidSnapshot raid)
+        {
+            lock (_lock)
+            {
+                raid = null;
+                return _raids.TryGetValue(expected.RaidId, out var aggregate)
+                    && aggregate.InstanceId == expected.InstanceId
+                    && aggregate.PhaseIndex == expected.PhaseIndex
+                    && TryEnterPhaseBreak(expected.RaidId, out raid);
+            }
+        }
+
+        internal bool TryFailPhase(RaidSnapshot expected, out RaidSnapshot raid)
+        {
+            lock (_lock)
+            {
+                raid = null;
+                return _raids.TryGetValue(expected.RaidId, out var aggregate)
+                    && aggregate.InstanceId == expected.InstanceId
+                    && TryFailPhase(expected.RaidId, expected.PhaseIndex, out raid);
+            }
+        }
+
         public bool TryCompletePhase(uint raidId, out RaidSnapshot raid)
         {
             lock (_lock)
@@ -693,11 +967,12 @@ namespace DfoServer.Game.Raid
             }
         }
 
-        public bool TryPrepareNextPhaseAutomatically(uint raidId, out RaidSnapshot raid)
+        public bool TryPrepareNextPhaseAutomatically(RaidSnapshot expected, out RaidSnapshot raid)
         {
             lock (_lock)
             {
-                if (!_raids.TryGetValue(raidId, out var aggregate))
+                if (!_raids.TryGetValue(expected.RaidId, out var aggregate)
+                    || aggregate.InstanceId != expected.InstanceId)
                 {
                     raid = null;
                     return false;
@@ -707,15 +982,27 @@ namespace DfoServer.Game.Raid
             }
         }
 
-        public bool TryCompletePreparedNextPhase(uint raidId, out RaidSnapshot raid)
+        public bool TryCompletePreparedNextPhase(RaidSnapshot expected,
+            Func<IReadOnlyList<RaidMember>, bool> partiesReady, out RaidSnapshot raid)
         {
             lock (_lock)
             {
-                if (!_raids.TryGetValue(raidId, out var aggregate)
+                if (!_raids.TryGetValue(expected.RaidId, out var aggregate)
+                    || aggregate.InstanceId != expected.InstanceId
+                    || aggregate.PreparationGeneration != expected.PreparationGeneration
+                    || !PreparationIsCurrent(aggregate)
                     || aggregate.State != 5
                     || aggregate.StateArgument != 0
                     || aggregate.PhaseIndex != 0
                     || !aggregate.StartPending)
+                {
+                    raid = null;
+                    return false;
+                }
+
+                // Recheck the actual Party owner at the transition boundary,
+                // not only before the callback attempts completion.
+                if (partiesReady == null || !partiesReady(aggregate.PreparationMembers))
                 {
                     raid = null;
                     return false;
@@ -752,6 +1039,7 @@ namespace DfoServer.Game.Raid
         }
         private RaidLeaveResult LeaveLocked(ushort userId)
         {
+            RemoveWaitingLocked(userId);
             if (!TryGetAggregate(userId, out var raid))
                 return null;
 
@@ -799,7 +1087,15 @@ namespace DfoServer.Game.Raid
             return false;
         }
 
-        private static bool TryPrepareNextPhaseLocked(RaidAggregate aggregate, out RaidSnapshot raid)
+        private void BeginPreparationLocked(RaidAggregate aggregate)
+        {
+            aggregate.StartPending = true;
+            aggregate.PreparationGeneration = ++_nextPreparationGeneration;
+            aggregate.PreparationMembers = aggregate.Members.Select(member => member.Clone()).ToArray();
+            aggregate.PreparationResponses.Clear();
+        }
+
+        private bool TryPrepareNextPhaseLocked(RaidAggregate aggregate, out RaidSnapshot raid)
         {
             if (aggregate.State != 5
                 || aggregate.StateArgument != 0
@@ -810,7 +1106,7 @@ namespace DfoServer.Game.Raid
                 return false;
             }
 
-            aggregate.StartPending = true;
+            BeginPreparationLocked(aggregate);
             raid = aggregate.Snapshot();
             return true;
         }

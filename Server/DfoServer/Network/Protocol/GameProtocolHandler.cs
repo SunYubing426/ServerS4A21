@@ -362,8 +362,12 @@ namespace DfoServer.Network
 
         private void RegisterCharacterHandlers(GameCommandRegistry.GameCommandRegistrationGroup d)
         {
-            d[0x0004] =
-                _characterSessionLifecycle.HandleSelectCharacterAsync;
+            d[0x0004] = async (s, h, b) =>
+            {
+                await _characterSessionLifecycle.HandleSelectCharacterAsync(s, h, b);
+                await _raidHandler.HandleRaidChannelWelcomeAsync(s);
+                await _raidHandler.HandleRebindResyncAsync(s);
+            };
             d[0x0005] = _characterSelectHandler.Handle_ENUM_CMDPACKET_CREATE_CHARACTER;
             d[0x0006] = _characterSelectHandler.Handle_ENUM_CMDPACKET_DELETE_CHARACTER;
             d[0x0007] = _characterSessionLifecycle
@@ -481,6 +485,12 @@ namespace DfoServer.Network
             d[(ushort)CmdPacketType.RAID_SET_SYMBOL] = _raidHandler.HandleRaidSetSymbol;
             d[(ushort)CmdPacketType.RAID_MANAGER_WORK] = _raidHandler.HandleRaidManagerWork;
             d[(ushort)CmdPacketType.MODIFY_RAID_INFO] = _raidHandler.HandleModifyRaidInfo;
+            d[0x0363] = _raidHandler.HandleRaidRequestMembers;
+            d[0x0364] = _raidHandler.HandleRaidJoinRequest;
+            d[0x033C] = _raidHandler.HandleRaidOtherChannelList;
+            d[0x0334] = _raidHandler.HandleRaidWaitingListRequest;
+            d[0x029C] = _raidHandler.HandleSetRaidWaiting;
+            d[0x029D] = _raidHandler.HandleRejoinRaid;
             d[0x00D9] = async (s, h, b) =>
             {
                 if (await _raidHandler.TryHandleCreatePopupClose(s, h, b))

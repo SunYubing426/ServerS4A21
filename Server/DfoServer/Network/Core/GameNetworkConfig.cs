@@ -10,6 +10,7 @@ namespace DfoServer.Network
         public const int Channel100Index = 100;
         public const int FreeDuelChannelIndex = 68;
         public const int RaidChannelIndex = 200;
+        public const int RaidSecondaryChannelIndex = 201;
         public const string ChannelName = "ch.11";
         public const int ChannelServerIndex = 1;
         public const int ChannelIndex = NormalChannelIndex;
@@ -19,11 +20,13 @@ namespace DfoServer.Network
         public const int Channel100ProxyGamePort = 10162;
         public const int FreeDuelGamePort = 10068;
         public const int RaidGamePort = 10200;
+        public const int RaidSecondaryGamePort = 10201;
         public const string FreeDuelListenerEnvironmentVariable =
             "DFO_FREE_DUEL_CHANNEL_LISTENER";
         public const byte GeneralChannelEnvironment = 0x01;
         public const byte FreeDuelChannelEnvironment = 0x0D;
         public const byte RaidChannelEnvironment = 0x17;
+        public const byte RaidSecondaryChannelEnvironment = 0x20;
         public const int InitialUdpPort1 = 12311;
         public const int InitialUdpPort2 = 12312;
         public const int LoginChannelPort = 10128;
@@ -110,6 +113,11 @@ namespace DfoServer.Network
                         RaidChannelIndex,
                         RaidGamePort,
                         RaidGamePort));
+                channels.Add(
+                    new GameChannelEndpoint(
+                        RaidSecondaryChannelIndex,
+                        RaidSecondaryGamePort,
+                        RaidSecondaryGamePort));
             }
             else
             {
@@ -167,13 +175,18 @@ namespace DfoServer.Network
                || listenerGamePort == Channel100ProxyGamePort;
 
         public static bool IsRaidChannel(int channelId)
-            => channelId == RaidChannelIndex;
+            => channelId == RaidChannelIndex
+               || channelId == RaidSecondaryChannelIndex;
 
         public static bool IsRaidListener(int listenerGamePort)
-            => listenerGamePort == RaidGamePort;
+            => listenerGamePort == RaidGamePort
+               || listenerGamePort == RaidSecondaryGamePort;
 
         public static byte ResolveLoginEnvironment(int listenerGamePort)
         {
+            if (listenerGamePort == RaidSecondaryGamePort)
+                return RaidSecondaryChannelEnvironment;
+
             if (IsRaidListener(listenerGamePort))
                 return RaidChannelEnvironment;
 
@@ -252,7 +265,7 @@ namespace DfoServer.Network
                     FreeDuelListenerEnvironmentVariable,
                     false);
             UdpRelayEnabled = ReadBoolEnvironmentVariable(
-                "DFO_UDP_RELAY", false);
+                "DFO_UDP_RELAY", true);
             PvpUdpRelayEnabled = ReadBoolEnvironmentVariable(
                 "DFO_PVP_UDP_RELAY", false);
 
@@ -261,6 +274,8 @@ namespace DfoServer.Network
                 udpRelayPublicIp = Environment.GetEnvironmentVariable(
                     "DFO_UDP_RELAY_PUBLIC_IP");
             }
+            if (string.IsNullOrWhiteSpace(udpRelayPublicIp))
+                udpRelayPublicIp = GetFirstNonLoopbackIPv4();
             if (!string.IsNullOrWhiteSpace(udpRelayPublicIp))
             {
                 UdpRelayPublicIp = udpRelayPublicIp.Trim();
@@ -363,6 +378,33 @@ namespace DfoServer.Network
             return int.TryParse(value, out var parsed)
                 ? parsed
                 : fallback;
+        }
+
+        private static string GetFirstNonLoopbackIPv4()
+        {
+            try
+            {
+                foreach (var nic in System.Net.NetworkInformation
+                    .NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (nic.OperationalStatus !=
+                        System.Net.NetworkInformation.OperationalStatus.Up
+                        || nic.NetworkInterfaceType ==
+                        System.Net.NetworkInformation.NetworkInterfaceType.Loopback)
+                        continue;
+                    foreach (var addr in nic.GetIPProperties().UnicastAddresses)
+                    {
+                        if (addr.Address.AddressFamily ==
+                            System.Net.Sockets.AddressFamily.InterNetwork
+                            && !System.Net.IPAddress.IsLoopback(addr.Address))
+                            return addr.Address.ToString();
+                    }
+                }
+            }
+            catch
+            {
+            }
+            return null;
         }
     }
 }

@@ -7,7 +7,7 @@ namespace DfoServer.Game.Raid
     {
         public ushort UserId { get; init; }
         public uint CharacterId { get; init; }
-        public Guid SessionId { get; init; }
+        public Guid SessionId { get; internal set; }
         public byte[] NameBytes { get; init; } = Array.Empty<byte>();
         public byte Job { get; init; }
         public byte GrowType { get; init; }
@@ -30,6 +30,8 @@ namespace DfoServer.Game.Raid
 
     public sealed class RaidSnapshot
     {
+        public Guid AssignmentVersion { get; init; }
+        public Guid InstanceId { get; init; }
         public uint RaidId { get; init; }
         public byte[] TitleBytes { get; init; } = Array.Empty<byte>();
         public uint State { get; init; }
@@ -39,6 +41,7 @@ namespace DfoServer.Game.Raid
         public uint PhaseTimeExtensionSeconds { get; init; }
         public uint PhaseDeathCount { get; init; }
         public ushort LeaderUserId { get; init; }
+        public long PreparationGeneration { get; init; }
         public IReadOnlyList<RaidMember> Members { get; init; } = Array.Empty<RaidMember>();
 
         public RaidMember Leader
@@ -67,6 +70,8 @@ namespace DfoServer.Game.Raid
 
     internal sealed class RaidAggregate
     {
+        public Guid InstanceId { get; } = Guid.NewGuid();
+        public Guid AssignmentVersion { get; set; } = Guid.NewGuid();
         private readonly List<RaidMember> _members = new List<RaidMember>(20);
 
         public uint RaidId { get; }
@@ -75,6 +80,9 @@ namespace DfoServer.Game.Raid
         public uint StateArgument { get; set; }
         public uint PhaseIndex { get; set; }
         public bool StartPending { get; set; }
+        public long PreparationGeneration { get; set; }
+        public IReadOnlyList<RaidMember> PreparationMembers { get; set; } = Array.Empty<RaidMember>();
+        public HashSet<ushort> PreparationResponses { get; } = new HashSet<ushort>();
         public long PhaseStartedAtMilliseconds { get; set; } = -1;
         public uint PhaseClearTimeSeconds { get; set; }
         public uint PhaseTimeExtensionSeconds { get; set; }
@@ -98,6 +106,15 @@ namespace DfoServer.Game.Raid
             return null;
         }
 
+        public bool AddMember(RaidMember member)
+        {
+            if (member == null || _members.Count >= 20 || GetMember(member.UserId) != null)
+                return false;
+            _members.Add(member);
+            AssignmentVersion = Guid.NewGuid();
+            return true;
+        }
+
         public bool RemoveMember(ushort userId)
         {
             for (var i = 0; i < _members.Count; i++)
@@ -105,6 +122,7 @@ namespace DfoServer.Game.Raid
                 if (_members[i].UserId != userId)
                     continue;
                 _members.RemoveAt(i);
+                AssignmentVersion = Guid.NewGuid();
                 return true;
             }
             return false;
@@ -119,6 +137,8 @@ namespace DfoServer.Game.Raid
             return new RaidSnapshot
             {
                 RaidId = RaidId,
+                InstanceId = InstanceId,
+                AssignmentVersion = AssignmentVersion,
                 TitleBytes = (byte[])TitleBytes.Clone(),
                 State = State,
                 StateArgument = StateArgument,
@@ -127,6 +147,7 @@ namespace DfoServer.Game.Raid
                 PhaseTimeExtensionSeconds = PhaseTimeExtensionSeconds,
                 PhaseDeathCount = PhaseDeathCount,
                 LeaderUserId = LeaderUserId,
+                PreparationGeneration = PreparationGeneration,
                 Members = members,
             };
         }
