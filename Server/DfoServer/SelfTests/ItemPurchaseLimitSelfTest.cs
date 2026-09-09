@@ -199,6 +199,10 @@ namespace DfoServer.SelfTests
                     "buy item ack uses requested purchase count",
                     VerifyBuyItemAckRequestedCount(accountItemId, 5),
                     ref failures);
+                Check(
+                    "buy item ack returns pre-purchase count before client applies purchase count",
+                    VerifyBuyItemAckPrePurchaseCount(accountItemId, 11, 1),
+                    ref failures);
 
                 var resetItemIdA = charItemId;
                 var resetItemIdB = accountItemId;
@@ -336,6 +340,43 @@ namespace DfoServer.SelfTests
                 && body.Length >= 9
                 && body[body.Length - 9] == 1
                 && BitConverter.ToInt32(body, body.Length - 8) == itemId
+                && BitConverter.ToInt32(body, body.Length - 4) == buyCount;
+        }
+
+        private static bool VerifyBuyItemAckPrePurchaseCount(
+            int itemId,
+            int finalCount,
+            int buyCount)
+        {
+            var body = BuyItemAckBuilder.Build(
+                new InventoryMutationResult
+                {
+                    SlotIndex = 3,
+                    ItemTemplateId = itemId,
+                    RemainingStackCount = finalCount,
+                    InstanceValue = finalCount,
+                    UpdatedGold = 0,
+                    UpdatedSp = 0,
+                    UpdatedCoin = 0,
+                    RequestedCount = (short)buyCount,
+                    CoreSnapshot = new ItemCore
+                    {
+                        ItemKind = ItemCore.KindConsumable,
+                        ItemId = itemId,
+                        Value = finalCount,
+                    },
+                },
+                new List<PurchaseCountUpdate>
+                {
+                    new PurchaseCountUpdate
+                    {
+                        ItemTemplateId = itemId,
+                        RequestedCount = buyCount,
+                    },
+                });
+
+            return body.Length >= 32
+                && BitConverter.ToInt32(body, 23) == finalCount - buyCount
                 && BitConverter.ToInt32(body, body.Length - 4) == buyCount;
         }
 
