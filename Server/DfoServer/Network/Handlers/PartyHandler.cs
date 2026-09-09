@@ -1841,14 +1841,32 @@ namespace DfoServer.Network.Handlers
                                     : "invite_not_found_or_stale";
                             return;
                         }
-                        join = _partyManager.AcceptInvite(
-                            accepterUid,
-                            session.SessionId,
-                            inviterUid,
-                            inviterSession.SessionId,
-                            inviterMember,
-                            accepterMember,
-                            out joinMode);
+                        var preparedResponse =
+                            _raidHandler?.TryCommitPreparationResponse(
+                                inviterUid,
+                                inviterSession.SessionId,
+                                accepterUid,
+                                session.SessionId,
+                                group =>
+                                {
+                                    join = _partyManager.AcceptPreparedRaidMember(
+                                        inviterMember,
+                                        accepterMember,
+                                        group);
+                                    joinMode = "raid-preparation";
+                                    return true;
+                                }) == true;
+                        if (!preparedResponse)
+                        {
+                            join = _partyManager.AcceptInvite(
+                                accepterUid,
+                                session.SessionId,
+                                inviterUid,
+                                inviterSession.SessionId,
+                                inviterMember,
+                                accepterMember,
+                                out joinMode);
+                        }
                         if (!join.Ok)
                         {
                             failureReason = join.Reason;
@@ -1869,7 +1887,8 @@ namespace DfoServer.Network.Handlers
                     $"入队失败 {failureReason}");
                 return;
             }
-            if (join?.Ok == true && join.PriorPartyLeave == null)
+            if (join?.Ok == true && join.PriorPartyLeave == null
+                && !join.MembershipUnchanged)
             {
                 var joiningSession = join.TargetUserId == inviterUid
                     ? inviterSession

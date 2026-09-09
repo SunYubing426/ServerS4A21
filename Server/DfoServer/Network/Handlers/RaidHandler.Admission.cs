@@ -499,20 +499,8 @@ public sealed partial class RaidHandler
 				await session.SendPacketAsync(BuildFailedRaidResultPacket(raid));
 			else
 				await SendRaidStateValueAsync(session, raid.State, raid.StateArgument);
-			if (raid.State == 2
-				&& _raids.TryGetAttackRemainingSeconds(
-					raid.RaidId,
-					AttackSeconds,
-					out var remainingSeconds))
+			if (raid.State == 2)
 			{
-				await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
-					0,
-					(ushort)NotiPacketType.RAID_SET_TIMER,
-					RaidPacketBuilder.BuildSetTimer(0u, 0u, remainingSeconds)));
-				await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
-					0,
-					(ushort)NotiPacketType.RAID_REMAIN_TIME,
-					RaidPacketBuilder.BuildRemainTime(0, remainingSeconds)));
 				if (_raidDungeonStates.TryGetValue(
 						raid.RaidId,
 						out var dungeonStateCache)
@@ -550,6 +538,35 @@ public sealed partial class RaidHandler
 							(ushort)NotiPacketType.RAID_DUNGEON_STATE,
 							RaidPacketBuilder.BuildDungeonState(
 								initialStates)));
+				}
+				var symbols = _symbolValues
+					.Where(entry => entry.Key.RaidId == raid.RaidId)
+					.OrderBy(entry => entry.Key.SymbolId)
+					.Select(entry => new KeyValuePair<uint, uint>(
+						entry.Key.SymbolId,
+						entry.Value))
+					.ToArray();
+				if (symbols.Length > 0)
+				{
+					await session.SendPacketAsync(
+						GamePacketEnvelopeBuilder.Build(
+							0,
+							(ushort)NotiPacketType.RAID_SET_SYMBOL,
+							RaidPacketBuilder.BuildSetSymbols(symbols)));
+				}
+				if (_raids.TryGetAttackRemainingSeconds(
+						raid.RaidId,
+						AttackSeconds,
+						out var remainingSeconds))
+				{
+					await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
+						0,
+						(ushort)NotiPacketType.RAID_SET_TIMER,
+						RaidPacketBuilder.BuildSetTimer(0u, 0u, remainingSeconds)));
+					await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
+						0,
+						(ushort)NotiPacketType.RAID_REMAIN_TIME,
+						RaidPacketBuilder.BuildRemainTime(0, remainingSeconds)));
 				}
 			}
 			else if (raid.State == 3)
