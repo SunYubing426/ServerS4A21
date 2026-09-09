@@ -26,6 +26,16 @@ namespace DfoServer.Network.Builders
                     result.CoreSnapshot,
                     protocolCount);
             }
+            else if (result.SlotIndex >= 0
+                && result.ItemTemplateId > 0
+                && result.RemainingStackCount > 0)
+            {
+                ItemListProtocolWriter.WriteVirtualCountEntry84(
+                    writer,
+                    result.SlotIndex,
+                    result.ItemTemplateId,
+                    result.RemainingStackCount);
+            }
             else
             {
                 WriteLegacyItemSummary(writer, result);
