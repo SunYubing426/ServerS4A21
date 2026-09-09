@@ -6,6 +6,7 @@ using DfoServer.Game.Party;
 using DfoServer.Infrastructure;
 using DfoServer.Network.Builders;
 using DfoServer.Network.Builders.Party;
+using DfoServer.Network.Builders.Raid;
 using DfoServer.Network.Parsers.Party;
 using System;
 using System.Collections.Generic;
@@ -36,6 +37,24 @@ namespace DfoServer.Network.Handlers
         private readonly Game.Session.CharacterTransitionCoordinator
             _characterTransitions;
         private PvpRoomHandler _pvpRoomHandler;
+        private RaidHandler _raidHandler;
+        private sealed class PendingRaidPeer
+        {
+            public Guid InviterSessionId { get; }
+            public Guid TargetSessionId { get; }
+            public int PeerInt { get; }
+
+            public PendingRaidPeer(Guid inviterSessionId, Guid targetSessionId, int peerInt)
+            {
+                InviterSessionId = inviterSessionId;
+                TargetSessionId = targetSessionId;
+                PeerInt = peerInt;
+            }
+        }
+
+        private readonly Dictionary<(ushort Inviter, ushort Target), PendingRaidPeer>
+            _pendingRaidPeers =
+                new Dictionary<(ushort Inviter, ushort Target), PendingRaidPeer>();
         private readonly object _broadcastGatesLock = new object();
         private readonly Dictionary<int, BroadcastGateEntry> _broadcastGates =
             new Dictionary<int, BroadcastGateEntry>();
@@ -84,6 +103,111 @@ namespace DfoServer.Network.Handlers
                 pvpRoomHandler
                 ?? throw new ArgumentNullException(
                     nameof(pvpRoomHandler));
+        }
+
+        internal void AttachRaidHandler(RaidHandler raidHandler)
+        {
+            _raidHandler = raidHandler
+                ?? throw new ArgumentNullException(nameof(raidHandler));
+            raidHandler.PreparationPartiesReady = _partyManager.ArePreparedRaidPartiesReady;
+            raidHandler.LivePartyAssignment = ReassignLiveRaidPartyAsync;
+        }
+
+        private async Task<Game.Raid.RaidSnapshot> ReassignLiveRaidPartyAsync(
+            EnhancedClientSession actor, Game.Raid.RaidSnapshot expected,
+            ushort targetId, ushort index)
+        {
+            var target = expected.Members.FirstOrDefault(m => m.UserId == targetId);
+            if (target == null || _characterTransitions == null)
+                return null;
+            var affected = expected.Members.Where(m => m.UserId == targetId
+                || m.UserId == expected.LeaderUserId
+                || (target.PartyIndex != 0 && m.PartyIndex == target.PartyIndex)
+                || (index != 0 && m.PartyIndex == index)).ToArray();
+            var sessions = new List<EnhancedClientSession>();
+            foreach (var member in affected.OrderBy(m => m.CharacterId))
+            {
+                if (!_sessions.TryGet(checked((int)member.CharacterId), out var current)
+                    || current.SessionId != member.SessionId
+                    || current.ListenerPort != actor.ListenerPort)
+                    return null;
+                sessions.Add(current);
+            }
+            Game.Raid.RaidSnapshot updated = null;
+            await RunWithDungeonSelectionAndEntryPartyTransitionGatesAsync(async () =>
+            {
+                var leases = new List<IDisposable>();
+                try
+                {
+                    foreach (var current in sessions)
+                    {
+                        var lease = await _characterTransitions.AcquireIfCurrentAsync(current);
+                        if (lease == null)
+                            return;
+                        leases.Add(lease);
+                    }
+                    if (!IsDirectoryCurrent(actor) || sessions.Any(s => !IsDirectoryCurrent(s)
+                        || s.Player.CurrentRun != null || s.Player.CurrentDungeonSelection != null))
+                        return;
+                    var movingSession = sessions.Single(s => s.Player.UserId == targetId);
+                    var moving = BuildMember(movingSession, movingSession.Player.CharacterId);
+                    List<Party> retired = null;
+                    List<Party> formed = null;
+                    if (!_raidHandler.CommitLivePartyAssignment(
+                            expected, actor.Player.UserId, actor.SessionId, targetId, index,
+                            roster => _partyManager.ReassignLiveRaidMember(
+                                roster, moving, index, out retired, out formed), out updated))
+                        return;
+                    foreach (var old in retired)
+                    {
+                        await CloseRelayRoomAsync(old.PartyId);
+                        foreach (var member in old.Members)
+                        {
+                            var recipient = sessions.Single(s => s.Player.UserId == member.UserId);
+                            await SendPartyClearBestEffortAsync(recipient, old, "raid-live-reassignment");
+                        }
+                    }
+                    foreach (var party in formed)
+                        await BroadcastPartyInfo(party.PartyId, includeP2p: true, delayedRebroadcast: false);
+                }
+                finally
+                {
+                    for (var i = leases.Count - 1; i >= 0; i--)
+                        leases[i].Dispose();
+                }
+            }, sessions.ToArray());
+            return updated;
+        }
+
+        public async Task RequestRaidPeerAsync(
+            EnhancedClientSession inviterSession,
+            EnhancedClientSession targetSession,
+            int peerInt)
+        {
+            if (inviterSession == null || targetSession == null)
+                return;
+            var (inviterCid, _) = SessionOwnerResolver.Resolve(inviterSession);
+            var (targetCid, _) = SessionOwnerResolver.Resolve(targetSession);
+            var inviterUid = (ushort)inviterCid;
+            var targetUid = (ushort)targetCid;
+            lock (_pendingRaidPeers)
+            {
+                _pendingRaidPeers[(inviterUid, targetUid)] =
+                    new PendingRaidPeer(inviterSession.SessionId, targetSession.SessionId, peerInt);
+            }
+            var sent = await Game.Session.SessionDirectory.TrySendBestEffortAsync(
+                cancellationToken => targetSession.SendPacketAsync(
+                    GamePacketEnvelopeBuilder.Build(
+                        0x00,
+                        (ushort)NotiPacketTypeA21.REQUEST_PEER,
+                        RaidPacketBuilder.BuildPeerInvite(inviterUid, peerInt)),
+                    cancellationToken),
+                $"raid peer invite target={targetUid}");
+            if (!sent)
+            {
+                lock (_pendingRaidPeers)
+                    _pendingRaidPeers.Remove((inviterUid, targetUid));
+            }
         }
 
         public async Task Handle_SET_UDP_IP_PORT(EnhancedClientSession session, GamePacketHeader header, byte[] body)
@@ -1268,6 +1392,32 @@ namespace DfoServer.Network.Handlers
                 return;
             }
 
+            if (reqType == 0x0A)
+            {
+                lock (_pendingRaidPeers)
+                {
+                    _pendingRaidPeers[(inviterUid, targetUid)] =
+                        new PendingRaidPeer(session.SessionId, targetSession.SessionId, peerInt);
+                }
+                var raidInviteSent = await Game.Session.SessionDirectory.TrySendBestEffortAsync(
+                    cancellationToken => targetSession.SendPacketAsync(
+                        GamePacketEnvelopeBuilder.Build(
+                            0x00,
+                            (ushort)NotiPacketTypeA21.REQUEST_PEER,
+                            RaidPacketBuilder.BuildPeerInvite(inviterUid, peerInt)),
+                        cancellationToken),
+                    $"raid peer invite target={targetUid}");
+                if (!raidInviteSent)
+                {
+                    lock (_pendingRaidPeers)
+                        _pendingRaidPeers.Remove((inviterUid, targetUid));
+                }
+                FileLogger.Log(
+                    $"[{ProtocolName}] RAID REQUEST_PEER by={inviterUid} "
+                    + $"target={targetUid} peer={peerInt} forwarded={raidInviteSent}");
+                return;
+            }
+
             if (reqType == 1)
             {
                 if (!await RunCurrentPartyPairMutationAsync(
@@ -1454,6 +1604,37 @@ namespace DfoServer.Network.Handlers
         internal static bool IsAcceptedTradePeerResponse(byte[] body)
             => body != null && body.Length == 7 && body[2] == 1;
 
+        private async Task HandleRaidPeerResponseAsync(
+            EnhancedClientSession session,
+            EnhancedClientSession inviterSession,
+            ushort inviterUid,
+            ushort accepterUid,
+            byte[] body)
+        {
+            PendingRaidPeer pending;
+            lock (_pendingRaidPeers)
+            {
+                _pendingRaidPeers.TryGetValue((inviterUid, accepterUid), out pending);
+                _pendingRaidPeers.Remove((inviterUid, accepterUid));
+            }
+            var accepted = body != null && body.Length == 7 && body[2] == 0x0A;
+            if (!accepted)
+            {
+                if (inviterSession != null)
+                {
+                    await inviterSession.SendPacketAsync(
+                        GamePacketEnvelopeBuilder.Build(
+                            0,
+                            (ushort)NotiPacketType.SERVER_NOTICE_MESSAGE,
+                            ServerNoticeMessageBuilder.Build("对方拒绝了您的攻坚队邀请/申请。")));
+                }
+                return;
+            }
+            if (pending == null || _raidHandler == null)
+                return;
+            await _raidHandler.HandleRaidPeerAcceptAsync(session, inviterSession);
+        }
+
         public Task Handle_RES_PEER(
             EnhancedClientSession session,
             GamePacketHeader header,
@@ -1501,7 +1682,8 @@ namespace DfoServer.Network.Handlers
             }
             if (reqType != 0 &&
                 reqType != 1 &&
-                reqType != 2)
+                reqType != 2 &&
+                reqType != 0x0A)
             {
                 FileLogger.Log(
                     $"[{ProtocolName}] RES_PEER: unsupported type={reqType}");
@@ -1522,6 +1704,13 @@ namespace DfoServer.Network.Handlers
                     $"from={session.ListenerPort} to={inviterSession.ListenerPort}");
                 if (reqType == 2)
                     await SendPvpInviteFailureAsync(session, 19);
+                return;
+            }
+
+            if (reqType == 0x0A)
+            {
+                await HandleRaidPeerResponseAsync(
+                    session, inviterSession, inviterUid, accepterUid, body);
                 return;
             }
 
@@ -2089,7 +2278,8 @@ namespace DfoServer.Network.Handlers
         private async Task BroadcastPartyInfo(
             int partyId,
             bool includeP2p = true,
-            Func<Task> afterRealtime = null)
+            Func<Task> afterRealtime = null,
+            bool delayedRebroadcast = true)
         {
             if (_sessions == null || partyId <= 0)
                 return;
@@ -2098,13 +2288,15 @@ namespace DfoServer.Network.Handlers
             await BroadcastPartyInfoWithinGate(
                 partyId,
                 includeP2p,
-                afterRealtime);
+                afterRealtime,
+                delayedRebroadcast);
         }
 
         private async Task BroadcastPartyInfoWithinGate(
             int partyId,
             bool includeP2p = true,
-            Func<Task> afterRealtime = null)
+            Func<Task> afterRealtime = null,
+            bool delayedRebroadcast = true)
         {
             // PartyManager returns a detached generation. Every packet and
             // relay binding below is derived from this same immutable view.

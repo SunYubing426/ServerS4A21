@@ -35,12 +35,22 @@ namespace DfoServer.Network
                 var (handler, structure) = config.Value;
 
                 var listener = new TcpListener(IPAddress.Any, port);
+                try
+                {
+                    listener.Start();
+                }
+                catch (SocketException ex)
+                {
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine($"[警告] 端口 {port} 绑定失败({ex.SocketErrorCode}), 已跳过该频道: {handler.ProtocolName}");
+                    Console.ResetColor();
+                    FileLogger.Log($"Server FAILED to bind port {port} ({ex.SocketErrorCode}), skipped {handler.ProtocolName}");
+                    continue;
+                }
+
                 _listeners[port] = listener;
                 _protocolHandlers[port] = handler;
                 _packetStructures[port] = structure;
-
-
-                listener.Start();
 
 
                 
@@ -48,6 +58,9 @@ namespace DfoServer.Network
 
                 FileLogger.Log($"Server started on port {port} with {structure.GetType().Name} and {handler.ProtocolName}");
             }
+
+            if (_listeners.Count == 0)
+                throw new InvalidOperationException("没有任何端口绑定成功，服务器无法启动。");
         }
 
         
@@ -110,7 +123,19 @@ namespace DfoServer.Network
                     }
 
                     
-                    var packets = _packetProcessor.ProcessReceivedData(session.SessionId, buffer, bytesRead);
+                    List<FlexiblePacket> packets;
+                    try
+                    {
+                        packets = _packetProcessor.ProcessReceivedData(session.SessionId, buffer, bytesRead);
+                    }
+                    catch (InvalidDataException ex)
+                    {
+                        FileLogger.Log(
+                            $"[TCP] malformed packet from {session.SessionId} on port {port}; "
+                            + $"discarding receive buffer and keeping connection: {ex.Message}");
+                        _packetProcessor.CleanupClient(session.SessionId);
+                        continue;
+                    }
 
                     
                     if (_protocolHandlers.TryGetValue(port, out IProtocolHandler handler))

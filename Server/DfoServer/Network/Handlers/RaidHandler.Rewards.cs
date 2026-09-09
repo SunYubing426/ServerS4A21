@@ -336,7 +336,8 @@ public sealed partial class RaidHandler
 				{
 					UserId = initialOwner.UserId,
 					CardType = (byte)cardIndex,
-					Quantity = ((rewardType != 0) ? 1u : ((uint)reward.Count)),
+					// This row displays one configured container, not its contents.
+					Quantity = 1u,
 					ItemId = configurationItemId,
 					Flags = 0u
 				}));
@@ -474,7 +475,7 @@ public sealed partial class RaidHandler
 		if (member != null && flow.TryGetSelectedCardIndex(userId, out var selectedCardIndex) && flow.TryGetOrCreatePartyCardReward(member.PartyIndex, rewardType, selectedCardIndex, configurationItemId, out var reward))
 		{
 			uint displayItemId = GetPhaseOnePartyCardDisplayItemId(rewardType, configurationItemId, reward.ItemId);
-			int displayCount = reward.Count;
+			int displayCount = GetPhaseOnePartyCardDisplayCount(rewardType, reward.Count);
 			RaidRewardEntry[] entries = new RaidRewardEntry[1] { BuildPhaseOnePartyCardRevealEntry(member.UserId, selectedCardIndex, displayItemId, displayCount) };
 			byte[] packet = GamePacketEnvelopeBuilder.Build(0, 601, RaidPacketBuilder.BuildRaidRewardList(rewardType, entries));
 			await _sessions.BroadcastToAsync(from entry in raid.Members
@@ -487,6 +488,15 @@ public sealed partial class RaidHandler
 	internal static uint GetPhaseOnePartyCardDisplayItemId(byte rewardType, uint configurationItemId, uint rewardItemId)
 	{
 		return (rewardType == 0) ? configurationItemId : rewardItemId;
+	}
+
+	internal static int GetPhaseOnePartyCardDisplayCount(byte rewardType, int rewardCount)
+	{
+		if (rewardCount <= 0)
+			throw new ArgumentOutOfRangeException(nameof(rewardCount));
+		// Gold retains the configured container ID above. Show one container;
+		// the actual gold amount belongs to the unchanged inventory grant path.
+		return rewardType == 0 ? 1 : rewardCount;
 	}
 
 	internal static RaidRewardEntry BuildPhaseOnePartyCardRevealEntry(ushort userId, byte cardIndex, uint itemId, int count)
@@ -606,7 +616,7 @@ public sealed partial class RaidHandler
 				await BroadcastRaidNotificationAsync(completed, NotiPacketType.RAID_REMAIN_TIME, RaidPacketBuilder.BuildRemainTime(1, remainingBreakSeconds));
 				await EnablePhaseOneDungeonReturnAsync(completed);
 				_phaseRewardFlows.TryRemove(raidId, out value);
-				RunInBackground(RunPhaseBreakTimerAsync(raidId, remainingBreakSeconds), "phase-break");
+				SchedulePhaseBreakTimer(completed, remainingBreakSeconds);
 				FileLogger.Log($"[GameProtocol] RAID_PHASE1_BREAK raid={raidId} state={completed.State} break={remainingBreakSeconds}");
 			}
 		}

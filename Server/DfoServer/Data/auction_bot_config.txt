@@ -1,0 +1,38 @@
+# ============================================================
+# 拍卖行机器人配置（每个 tick 热重载，改完即生效）
+# 补货目标清单在 auction_bot_items.txt
+# ============================================================
+
+# 总开关：0=关闭（默认，安全第一），1=开启
+enabled = 0
+
+# 干跑模式：1=只输出计划日志不写库（默认，先验证逻辑），0=真实写库
+dry_run = 1
+
+# tick 间隔（秒，最小 60；挂在分钟 tick 上自节流）
+interval_seconds = 600
+
+# 每 tick 回收扫描的玩家挂牌上限
+recycle_scan_limit = 200
+
+# 每 tick 最多回收件数
+max_recycle_per_tick = 20
+
+# 每 tick 最多补货件数
+max_restock_per_tick = 50
+
+# bot 挂牌时长（小时，1~720）
+listing_hours = 48
+
+# ★ 动态调价规则（2026-09-06 用户拍板）：
+#   每卖出一件 bot 补货 → 该物品下次补货价上调 sale_up_percent %
+#   每回收一件玩家挂牌 → 该物品下次补货价下调 recycle_down_percent %
+sale_up_percent = 3
+recycle_down_percent = 3
+
+# ±3% 累计倍率钳制（防无限通胀/贬值）
+price_mult_min = 0.5
+price_mult_max = 2.0
+
+# 固定随机种子：0=系统时间随机；>0 可复现测试
+random_seed = 0

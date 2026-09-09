@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using DfoServer.Game.Dungeon;
 using DfoServer.Game.Inventory;
 using DfoServer.Game.Raid;
+using DfoServer.Infrastructure;
 using DfoServer.Network.Builders;
 using DfoServer.Network.Builders.Raid;
 
@@ -20,6 +21,18 @@ public sealed partial class RaidHandler
 			await HandleStartNextRaidPhaseAsync(session, header, body);
 			return;
 		}
+		if (emptyBody && TryResolveUserId(session, out var checkUserId) && _raids.TryGetByUser(checkUserId, out var costCheckRaid) && !HasAllEntryCosts(costCheckRaid))
+		{
+			// Official feedback: the client shows nothing for a failed 0x029B
+			// ack, so push the official "unprepared member" notice explicitly.
+			await SendAckAsync(session, header.type, success: false);
+			await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
+				0,
+				(ushort)NotiPacketType.SERVER_NOTICE_MESSAGE,
+				ServerNoticeMessageBuilder.Build("攻坚队中存在未准备入场材料的队员。")));
+			FileLogger.Log($"[GameProtocol] START_RAID rejected entry-cost raid={costCheckRaid.RaidId} user={checkUserId}");
+			return;
+		}
 		if (!emptyBody || !TryResolveUserId(session, out var userId) || !_raids.TryGetByUser(userId, out var candidate) || !HasAllEntryCosts(candidate) || !_raids.TryBeginStart(userId, out var raid))
 		{
 			await SendAckAsync(session, header.type, success: false);
@@ -30,18 +43,49 @@ public sealed partial class RaidHandler
 		await BroadcastRaidNotificationAsync(raid, NotiPacketType.RAID_SET_TIMER, RaidPacketBuilder.BuildSetTimer(0u, 0u, 3u));
 		await BroadcastRaidNotificationAsync(raid, NotiPacketType.RAID_REMAIN_TIME, RaidPacketBuilder.BuildRemainTime(0, 3u));
 		await BroadcastRaidNotificationAsync(raid, NotiPacketType.PREPARE_START_RAID, Array.Empty<byte>());
-		await Task.Delay(3000);
+		// The TCP receive loop awaits each handler. Yield it immediately so the
+		// raid leader's singleton SET_PARTY_INFO can run during preparation.
+		ClockService.Instance.ScheduleOneShotAfterAsync(
+			$"raid-preparation:{raid.RaidId}:{raid.PreparationGeneration}",
+			TimeSpan.FromSeconds(3), _ => CompleteRaidPreparationAsync(raid));
+	}
+
+	private async Task CompleteRaidPreparationAsync(RaidSnapshot raid)
+	{
+		var userId = raid.LeaderUserId;
+		if (!_sessions.TryGet(checked((int)raid.Leader.CharacterId), out var session)
+			|| session.SessionId != raid.Leader.SessionId || !IsRaidSession(session))
+		{
+			if (_raids.TryCancelPreparation(raid, out var abandoned))
+				await BroadcastRaidStateAsync(abandoned);
+			return;
+		}
+		if (!_raids.IsPreparationReady(raid, members => PreparationPartiesReady?.Invoke(members) == true))
+		{
+			if (_raids.TryCancelPreparation(raid, out var notPrepared))
+			{
+				await BroadcastRaidStateAsync(notPrepared);
+				await BroadcastRaidNotificationAsync(notPrepared, NotiPacketType.RAID_ENTRY_COST_INFO,
+					RaidPacketBuilder.BuildEntryCostInfo(BuildEntryCostStatuses(notPrepared)));
+				await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(0,
+					(ushort)NotiPacketTypeA21.SERVER_NOTICE_MESSAGE,
+					ServerNoticeMessageBuilder.Build("攻坚小队组建未完成，请确认队员在线且未加入其他队伍后重试。")));
+			}
+			FileLogger.Log($"[GameProtocol] START_RAID preparation incomplete raid={raid.RaidId} generation={raid.PreparationGeneration}; no materials consumed");
+			return;
+		}
 		if (!TryConsumeEntryCosts(raid, out var consumedCosts))
 		{
-			_raids.TryCancelStart(raid.RaidId, userId, out var cancelled);
+			_raids.TryCancelPreparation(raid, out var cancelled);
 			if (cancelled != null)
 			{
+				await BroadcastRaidStateAsync(cancelled);
 				await BroadcastRaidNotificationAsync(cancelled, NotiPacketType.RAID_ENTRY_COST_INFO, RaidPacketBuilder.BuildEntryCostInfo(BuildEntryCostStatuses(cancelled)));
 			}
 			FileLogger.Log($"[GameProtocol] START_RAID material check failed raid={raid.RaidId} leader={userId}");
 			return;
 		}
-		if (!_raids.TryCompleteStart(raid.RaidId, userId, out var started))
+		if (!_raids.TryCompletePreparation(raid, out var started))
 		{
 			FileLogger.Log($"[GameProtocol] START_RAID aborted raid={raid.RaidId} leader={userId}");
 			return;
@@ -91,9 +135,38 @@ public sealed partial class RaidHandler
 		await BroadcastRaidNotificationAsync(prepared, NotiPacketType.RAID_REMAIN_TIME, RaidPacketBuilder.BuildRemainTime(0, readySeconds));
 		await BroadcastRaidNotificationAsync(prepared, NotiPacketType.PREPARE_START_RAID, Array.Empty<byte>());
 		FileLogger.Log($"[GameProtocol] START_RAID_PHASE2_READY raid={prepared.RaidId} reason={reason} seconds={readySeconds}");
-		await Task.Delay(checked((int)readySeconds * 1000));
-		if (!_raids.TryCompletePreparedNextPhase(prepared.RaidId, out var started))
+		ClockService.Instance.ScheduleOneShotAfterAsync(
+			$"raid-phase2-preparation:{prepared.InstanceId}:{prepared.PreparationGeneration}",
+			TimeSpan.FromSeconds(readySeconds), _ => CompletePhaseTwoPreparationAsync(prepared, reason));
+	}
+
+	private async Task CompletePhaseTwoPreparationAsync(RaidSnapshot prepared, string reason)
+	{
+		bool online = prepared.Members.All(member =>
+			_sessions.TryGet(checked((int)member.CharacterId), out var current)
+			&& current.SessionId == member.SessionId && IsRaidSession(current));
+		if (!online || !_raids.IsPreparationReady(prepared, members => PreparationPartiesReady?.Invoke(members) == true))
 		{
+			if (_raids.TryCancelPreparation(prepared, out var cancelled))
+			{
+				await BroadcastRaidStateAsync(cancelled);
+				await BroadcastRaidNotificationAsync(cancelled, (NotiPacketType)NotiPacketTypeA21.RAID_REMAIN_TIME,
+					RaidPacketBuilder.BuildRemainTime(1, 0));
+				foreach (var member in cancelled.Members)
+					if (_sessions.TryGet(checked((int)member.CharacterId), out var current)
+						&& current.SessionId == member.SessionId)
+						await current.SendPacketAsync(GamePacketEnvelopeBuilder.Build(0,
+							(ushort)NotiPacketTypeA21.SERVER_NOTICE_MESSAGE,
+							ServerNoticeMessageBuilder.Build("第二阶段小队准备未完成，请确认队员在线并完成组队后重新开始。")));
+			}
+			FileLogger.Log($"[GameProtocol] START_RAID_PHASE2 preparation incomplete raid={prepared.RaidId} generation={prepared.PreparationGeneration}");
+			return;
+		}
+		if (!_raids.TryCompletePreparedNextPhase(prepared,
+			members => PreparationPartiesReady?.Invoke(members) == true, out var started))
+		{
+			if (_raids.TryCancelPreparation(prepared, out var cancelled))
+				await BroadcastRaidStateAsync(cancelled);
 			FileLogger.Log($"[GameProtocol] START_RAID_PHASE2 aborted raid={prepared.RaidId}");
 			return;
 		}
@@ -111,22 +184,17 @@ public sealed partial class RaidHandler
 		FileLogger.Log($"[GameProtocol] START_RAID_PHASE2_ATTACK raid={started.RaidId} reason={reason} seconds={AttackSeconds}");
 	}
 
-	private async Task RunPhaseBreakTimerAsync(uint raidId, uint seconds)
+	private void SchedulePhaseBreakTimer(RaidSnapshot expected, uint seconds)
 	{
-		int version = AdvanceTimer(raidId, 0u, 1u);
-		try
-		{
-			await Task.Delay(checked((int)seconds * 1000));
-			if (TimerCurrent(raidId, 0u, 1u, version) && _raids.TryPrepareNextPhaseAutomatically(raidId, out var prepared))
+		var raidId = expected.RaidId;
+		var version = AdvanceTimer(raidId, 0u, 1u);
+		ClockService.Instance.ScheduleOneShotAfterAsync(
+			$"raid-phase-break:{expected.InstanceId}", TimeSpan.FromSeconds(seconds), async _ =>
 			{
-				await PrepareAndStartAntonPhaseTwoAsync(prepared, "phase-break-timeout");
-			}
-		}
-		catch (Exception ex)
-		{
-			Exception ex2 = ex;
-			FileLogger.Log($"[GameProtocol] RAID_PHASE_BREAK_TIMER failed raid={raidId} error={ex2.Message}");
-		}
+				if (TimerCurrent(raidId, 0u, 1u, version)
+					&& _raids.TryPrepareNextPhaseAutomatically(expected, out var prepared))
+					await PrepareAndStartAntonPhaseTwoAsync(prepared, "phase-break-timeout");
+			});
 	}
 
 	public async Task HandleDungeonLoadedAsync(EnhancedClientSession session)
@@ -465,7 +533,7 @@ public sealed partial class RaidHandler
 
 	private async Task CompletePhaseTwoAsync(RaidSnapshot raid)
 	{
-		if (_raids.TryEnterPhaseBreak(raid.RaidId, out var result))
+		if (_raids.TryEnterPhaseBreak(raid, out var result))
 		{
 			CancelTimer(result.RaidId, AttackTimerType, AttackTimerDungeonId);
 			CancelAllPhaseTwoTimers(result.RaidId);
@@ -484,11 +552,11 @@ public sealed partial class RaidHandler
 
 	private void StartBarrierRecoveryTimer(RaidSnapshot raid)
 	{
-		int version = AdvanceTimer(raid.RaidId, 4u, 219u);
+		var version = AdvanceTimer(raid.RaidId, 4u, 219u);
 		RunInBackground(RunBarrierRecoveryTimerAsync(raid, version), "barrier-recovery");
 	}
 
-	private async Task RunBarrierRecoveryTimerAsync(RaidSnapshot raid, int version)
+	private async Task RunBarrierRecoveryTimerAsync(RaidSnapshot raid, Guid version)
 	{
 		try
 		{
@@ -596,12 +664,12 @@ public sealed partial class RaidHandler
 
 	private async Task StartHatcheryOpenTimerAsync(RaidSnapshot raid)
 	{
-		int version = AdvanceTimer(raid.RaidId, 3u, 219u);
+		var version = AdvanceTimer(raid.RaidId, 3u, 219u);
 		await SendTimerAsync(raid, 3u, 219u, 180u);
 		RunInBackground(RunHatcheryOpenTimerAsync(raid, version), "hatchery-open");
 	}
 
-	private async Task RunHatcheryOpenTimerAsync(RaidSnapshot raid, int version)
+	private async Task RunHatcheryOpenTimerAsync(RaidSnapshot raid, Guid version)
 	{
 		try
 		{
@@ -661,12 +729,12 @@ public sealed partial class RaidHandler
 
 	private void StartRepeatingHatcherySymbolTimer(RaidSnapshot raid, uint dungeonId, uint timerType, uint initialSeconds, uint repeatSeconds, uint symbolId)
 	{
-		int version = AdvanceTimer(raid.RaidId, timerType, dungeonId);
+		var version = AdvanceTimer(raid.RaidId, timerType, dungeonId);
 		RunInBackground(SendTimerAsync(raid, timerType, dungeonId, initialSeconds), "hatchery-symbol-send-timer");
 		RunInBackground(RunRepeatingHatcherySymbolTimerAsync(raid, dungeonId, timerType, initialSeconds, repeatSeconds, symbolId, version), "hatchery-symbol-repeat");
 	}
 
-	private async Task RunRepeatingHatcherySymbolTimerAsync(RaidSnapshot raid, uint dungeonId, uint timerType, uint initialSeconds, uint repeatSeconds, uint symbolId, int version)
+	private async Task RunRepeatingHatcherySymbolTimerAsync(RaidSnapshot raid, uint dungeonId, uint timerType, uint initialSeconds, uint repeatSeconds, uint symbolId, Guid version)
 	{
 		uint delaySeconds = initialSeconds;
 		try
@@ -693,12 +761,12 @@ public sealed partial class RaidHandler
 
 	private async Task StartHatcheryRecoveryTimerAsync(RaidSnapshot raid, uint dungeonId)
 	{
-		int version = AdvanceTimer(raid.RaidId, 2u, dungeonId);
+		var version = AdvanceTimer(raid.RaidId, 2u, dungeonId);
 		await SendTimerAsync(raid, 2u, dungeonId, 240u);
 		RunInBackground(RunHatcheryRecoveryTimerAsync(raid, dungeonId, version), "hatchery-recovery");
 	}
 
-	private async Task RunHatcheryRecoveryTimerAsync(RaidSnapshot raid, uint dungeonId, int version)
+	private async Task RunHatcheryRecoveryTimerAsync(RaidSnapshot raid, uint dungeonId, Guid version)
 	{
 		try
 		{
@@ -748,7 +816,7 @@ public sealed partial class RaidHandler
 
 	private async Task CompletePhaseOneAsync(RaidSnapshot raid)
 	{
-		if (_raids.TryEnterPhaseBreak(raid.RaidId, out var waiting))
+		if (_raids.TryEnterPhaseBreak(raid, out var waiting))
 		{
 			CancelTimer(waiting.RaidId, AttackTimerType, AttackTimerDungeonId);
 			CancelAllPhaseOneTimers(raid.RaidId);

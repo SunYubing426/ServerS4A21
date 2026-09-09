@@ -471,26 +471,27 @@ public sealed partial class RaidHandler
 		if (raid == null || !_raids.TryGetSituationGroups(raid.RaidId, out var groups))
 			return;
 
-		RaidSituationGroup group = groups.FirstOrDefault(candidate => candidate.MemberKeys.Contains(userId));
-		if (group == null || group.DungeonId == 0 || group.MemberKeys.Count == 0)
-			return;
+		foreach (var packet in BuildRaidParticipationRefreshPackets(groups))
+			await session.SendPacketAsync(packet);
+	}
 
-		// Rebuild the client-side row on status-window refresh. This also repairs a
-		// stale row when the exit notification was dropped during a scene change.
-		await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
-			0,
-			585,
-			RaidPacketBuilder.BuildRaidDungeonParticipationInfo(
-				group.DungeonId,
-				0u,
-				group.MemberKeys)));
-		await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
-			0,
-			585,
-			RaidPacketBuilder.BuildRaidDungeonParticipationInfo(
-				group.DungeonId,
-				2u,
-				group.MemberKeys)));
+	internal static IReadOnlyList<byte[]> BuildRaidParticipationRefreshPackets(IReadOnlyList<RaidSituationGroup> groups)
+	{
+		if (groups == null)
+			throw new ArgumentNullException(nameof(groups));
+		var packets = new List<byte[]>();
+		// Project all currently occupied groups from RaidManager, not only the
+		// requester's group. Keep the existing remove/refresh sequence per row.
+		foreach (var group in groups)
+		{
+			if (group.DungeonId == 0 || group.MemberKeys.Count == 0)
+				continue;
+			foreach (uint operation in group.DungeonCleared ? new uint[] { 0, 2, 4 } : new uint[] { 0, 2 })
+				packets.Add(GamePacketEnvelopeBuilder.Build(0,
+					(ushort)NotiPacketTypeA21.RAID_DUNGEON_PARTICIPATION_INFO,
+					RaidPacketBuilder.BuildRaidDungeonParticipationInfo(group.DungeonId, operation, group.MemberKeys)));
+		}
+		return packets;
 	}
 	private Task BroadcastRaidMonsterStatusAsync(RaidSnapshot raid)
 	{

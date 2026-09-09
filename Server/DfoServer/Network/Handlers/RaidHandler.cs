@@ -25,10 +25,19 @@ public sealed partial class RaidHandler
 	private readonly ISessionDirectory _sessions;
 
 	private readonly RaidManager _raids;
+	internal Func<IReadOnlyList<RaidMember>, bool> PreparationPartiesReady { get; set; }
+	internal Func<EnhancedClientSession, RaidSnapshot, ushort, ushort, Task<RaidSnapshot>> LivePartyAssignment { get; set; }
+	internal bool CommitLivePartyAssignment(RaidSnapshot expected, ushort actor, Guid session,
+		ushort target, ushort index, Func<IReadOnlyList<RaidMember>, bool> commit, out RaidSnapshot result)
+		=> _raids.TryAssignLiveParty(expected, actor, session, target, index, commit, out result);
+
+	internal bool TryCommitPreparationResponse(ushort leader, Guid leaderSession,
+		ushort member, Guid memberSession, Func<IReadOnlyList<RaidMember>, bool> commit)
+		=> _raids.TryCommitPreparationResponse(leader, leaderSession, member, memberSession, commit);
 
 	private readonly ConcurrentDictionary<Guid, byte> _objectSent = new ConcurrentDictionary<Guid, byte>();
 
-	private readonly ConcurrentDictionary<string, int> _timerVersions = new ConcurrentDictionary<string, int>();
+	private readonly ConcurrentDictionary<string, Guid> _timerVersions = new ConcurrentDictionary<string, Guid>();
 
 	private readonly ConcurrentDictionary<(uint RaidId, uint SymbolId), uint> _symbolValues = new ConcurrentDictionary<(uint, uint), uint>();
 
@@ -93,11 +102,21 @@ public sealed partial class RaidHandler
 		{
 			titleBytes = BuildDefaultTitle(member.CharacterId);
 		}
-		RaidSnapshot raid = _raids.Create(titleBytes, member);
+		int channelId = GameNetworkConfig.ResolveGameChannel(session.ListenerPort).ChannelId;
+		RaidSnapshot raid = _raids.Create(titleBytes, member, channelId);
 		await SendRaidObjectAsync(session, raid);
+		IReadOnlyList<RaidMemberSnapshot> createMembers = ToPacketMembers(raid);
+		byte[] createObjectPacket = GamePacketEnvelopeBuilder.Build(0, 592, RaidPacketBuilder.BuildRaidCreate(raid.RaidId, raid.TitleBytes, raid.State, raid.StateArgument, ToPacketMember(raid.Leader), createMembers));
+		foreach (EnhancedClientSession channelSession in GetRaidChannelSessions(raid))
+		{
+			if (channelSession.SessionId != session.SessionId)
+			{
+				await channelSession.SendPacketAsync(createObjectPacket);
+			}
+		}
 		_objectSent[session.SessionId] = 0;
 		await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(1, header.type, RaidPacketBuilder.BuildCreateAck(raid.RaidId)));
-		int channelId = GameNetworkConfig.ResolveGameChannel(session.ListenerPort).ChannelId;
+		await BroadcastRaidDirectoryAsync(raid);
 		FileLogger.Log($"[GameProtocol] CREATE_RAID channel={channelId} cid={member.CharacterId} user={member.UserId} raid={raid.RaidId} title={BitConverter.ToString(raid.TitleBytes)}");
 	}
 
@@ -108,6 +127,9 @@ public sealed partial class RaidHandler
 	}
 
 
+	// 0x029A body: [u16 targetUserId]. Self-leave sends the sender's own id;
+	// the leader's "攻坚队员强退" sends the member's id (capture-verified:
+	// [02 00] kicked uid 2). Kick removes only that member; the raid survives.
 	public async Task HandleLeaveRaid(EnhancedClientSession session, GamePacketHeader header, byte[] body)
 	{
 		if (!TryResolveUserId(session, out var userId))
@@ -115,7 +137,55 @@ public sealed partial class RaidHandler
 			await SendAckAsync(session, header.type, success: false);
 			return;
 		}
-		RaidLeaveResult result = _raids.Leave(userId);
+		ushort targetUserId = userId;
+		if (body != null && body.Length >= 2)
+		{
+			ushort parsed = BitConverter.ToUInt16(body, 0);
+			if (parsed != 0)
+			{
+				targetUserId = parsed;
+			}
+		}
+		bool isKick = targetUserId != userId
+			&& _raids.TryGetByUser(userId, out var senderRaid)
+			&& senderRaid.Leader != null
+			&& senderRaid.Leader.UserId == userId;
+		if (targetUserId != userId && !isKick)
+		{
+			await SendAckAsync(session, header.type, success: false);
+			FileLogger.Log($"[GameProtocol] LEAVE_RAID kick rejected: non-leader user={userId} target={targetUserId}");
+			return;
+		}
+		RaidLeaveResult result = _raids.Leave(targetUserId);
+		if (isKick && result.Ok)
+		{
+			await SendAckAsync(session, header.type, true);
+			_objectSent.TryRemove(session.SessionId, out var _);
+			byte[] kickRemove = GamePacketEnvelopeBuilder.Build(0, 592, RaidPacketBuilder.BuildRaidRemove(result.RaidId));
+			RaidMember kicked = result.PreviousRaid?.Members?.FirstOrDefault(m => m.UserId == targetUserId);
+			if (kicked != null
+				&& _sessions.TryGet(checked((int)kicked.CharacterId), out var kickedSession)
+				&& kickedSession != null)
+			{
+				_objectSent.TryRemove(kickedSession.SessionId, out var _);
+				await kickedSession.SendPacketAsync(kickRemove);
+				// cmd=0x01 type=0x0530 [u8 kicked]: official "membership ended"
+				// noti (handler 0x1114150 = t1[0x0530]; the t2[0x03A5] alias on
+				// cmd=0x00 passes arg2=0 and only toasts). Shows the official
+				// 已经强制退出攻坚队 toast and clears the client's my-raid
+				// state (mgr->0xc2be60) so the window falls back to apply UI.
+				await kickedSession.SendPacketAsync(
+					GamePacketEnvelopeBuilder.Build(1, 0x0530, new byte[] { 1 }));
+			}
+			if (!result.Disbanded && result.RemainingRaid != null)
+			{
+				await BroadcastRaidObjectAsync(result.RemainingRaid);
+				await BroadcastRaidMembersAsync(result.RemainingRaid);
+				await BroadcastRaidDirectoryAsync(result.RemainingRaid);
+			}
+			FileLogger.Log($"[GameProtocol] LEAVE_RAID kick by={userId} target={targetUserId} raid={result.RaidId} disbanded={result.Disbanded}");
+			return;
+		}
 		await SendAckAsync(session, header.type, result.Ok);
 		if (!result.Ok)
 		{
@@ -126,15 +196,29 @@ public sealed partial class RaidHandler
 		await session.SendPacketAsync(removePacket);
 		if (!result.Disbanded)
 		{
+			// Self-leave: reset the leaver's own my-raid state (cmd=1 0x0530).
+			await session.SendPacketAsync(
+				GamePacketEnvelopeBuilder.Build(1, 0x0530, new byte[] { 0 }));
+			await BroadcastRaidObjectAsync(result.RemainingRaid);
 			await BroadcastRaidMembersAsync(result.RemainingRaid);
+			await BroadcastRaidDirectoryAsync(result.RemainingRaid);
 		}
 		else
 		{
 			CleanupRaidRuntimeState(result.RaidId);
-			IEnumerable<int> others = from m in result.PreviousRaid.Members
-				where m.UserId != userId
-				select checked((int)m.CharacterId);
-			await _sessions.BroadcastToAsync(others, removePacket);
+			// Disband notifies the whole raid channel so every client's query
+			// window drops the raid, not just former members.
+			await BroadcastToRaidChannelAsync(result.PreviousRaid, removePacket);
+			// Former members get the my-raid reset noti as well.
+			if (result.PreviousRaid?.Members != null)
+			{
+				byte[] endedNoti = GamePacketEnvelopeBuilder.Build(1, 0x0530, new byte[] { 0 });
+				foreach (RaidMember former in result.PreviousRaid.Members)
+				{
+					await _sessions.SendToAsync(checked((int)former.CharacterId), endedNoti);
+				}
+			}
+			await BroadcastRaidDirectoryAsync(result.PreviousRaid);
 		}
 		FileLogger.Log($"[GameProtocol] LEAVE_RAID user={userId} raid={result.RaidId} disbanded={result.Disbanded}");
 	}
@@ -235,9 +319,17 @@ public sealed partial class RaidHandler
 		ushort targetActorId = BitConverter.ToUInt16(body, 4);
 		uint partyIndex = BitConverter.ToUInt32(body, 8);
 		RaidSnapshot raid = null;
-		bool ok = op == 0
-			&& _raids.TryGetByUser(actingUserId, out var currentRaid)
-			&& _raids.TryAssignParty(actingUserId, targetActorId, partyIndex, out raid);
+		bool ok = false;
+		if (op == 0 && partyIndex <= 10 && _raids.TryGetByUser(actingUserId, out var currentRaid))
+		{
+			if ((currentRaid.State == 2 || currentRaid.State == 5) && LivePartyAssignment != null)
+			{
+				raid = await LivePartyAssignment(session, currentRaid, targetActorId, (ushort)partyIndex);
+				ok = raid != null;
+			}
+			else if (currentRaid.State == 0)
+				ok = _raids.TryAssignParty(actingUserId, targetActorId, partyIndex, out raid);
+		}
 		await SendAckAsync(session, header.type, ok);
 		if (ok)
 		{
@@ -310,19 +402,49 @@ public sealed partial class RaidHandler
 
 	private Task SendRaidStateValueAsync(EnhancedClientSession session, uint state, uint stateArgument)
 	{
-		return session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(0, 588, RaidPacketBuilder.BuildRaidState(state, stateArgument)));
+		return session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(0, (ushort)NotiPacketType.RAID_STATE, RaidPacketBuilder.BuildRaidState(state, stateArgument)));
 	}
 
 	private Task BroadcastRaidObjectAsync(RaidSnapshot raid)
 	{
 		IReadOnlyList<RaidMemberSnapshot> members = ToPacketMembers(raid);
 		byte[] packet = GamePacketEnvelopeBuilder.Build(0, 592, RaidPacketBuilder.BuildRaidModify(raid.RaidId, raid.TitleBytes, raid.State, raid.StateArgument, ToPacketMember(raid.Leader), members));
-		return _sessions.BroadcastToAsync(ToCharacterIds(raid), packet);
+		// Official 2016 behavior: every raid-channel client keeps all raids in
+		// its local manager so the "寻找攻坚队" query window can list them.
+		// Non-member clients register the object but never select it
+		// (check_raid fails), so a channel-wide broadcast is safe.
+		return BroadcastToRaidChannelAsync(raid, packet);
+	}
+
+	private IEnumerable<EnhancedClientSession> GetRaidChannelSessions(RaidSnapshot raid)
+	{
+		int channelId = unchecked((int)(raid.RaidId >> 16));
+		foreach (EnhancedClientSession candidate in _sessions.GetAllGameSessions())
+		{
+			if (candidate != null
+				&& GameNetworkConfig.IsRaidListener(candidate.ListenerPort)
+				&& GameNetworkConfig.ResolveGameChannel(candidate.ListenerPort).ChannelId == channelId)
+			{
+				yield return candidate;
+			}
+		}
+	}
+
+	private Task BroadcastToRaidChannelAsync(RaidSnapshot raid, byte[] packet)
+	{
+		List<Task> tasks = new List<Task>();
+		foreach (EnhancedClientSession candidate in GetRaidChannelSessions(raid))
+		{
+			tasks.Add(candidate.SendPacketAsync(packet));
+		}
+		return Task.WhenAll(tasks);
 	}
 
 	private Task BroadcastRaidStateAsync(RaidSnapshot raid)
 	{
-		byte[] packet = GamePacketEnvelopeBuilder.Build(0, 588, RaidPacketBuilder.BuildRaidState(raid.State, raid.StateArgument));
+		byte[] packet = raid.State == 4 && raid.StateArgument == 1
+			? BuildFailedRaidResultPacket(raid)
+			: GamePacketEnvelopeBuilder.Build(0, (ushort)NotiPacketType.RAID_STATE, RaidPacketBuilder.BuildRaidState(raid.State, raid.StateArgument));
 		return _sessions.BroadcastToAsync(ToCharacterIds(raid), packet);
 	}
 
@@ -335,13 +457,74 @@ public sealed partial class RaidHandler
 	private Task BroadcastRaidInfoAsync(RaidSnapshot raid)
 	{
 		byte[] packet = GamePacketEnvelopeBuilder.Build(0, 592, RaidPacketBuilder.BuildRaidInfoUpdate(raid.RaidId, raid.TitleBytes, raid.State, raid.StateArgument, ToPacketMember(raid.Leader)));
-		return _sessions.BroadcastToAsync(ToCharacterIds(raid), packet);
+		return BroadcastToRaidChannelAsync(raid, packet);
 	}
 
 	private Task BroadcastRaidMembersAsync(RaidSnapshot raid)
 	{
-		byte[] packet = GamePacketEnvelopeBuilder.Build(0, 593, RaidPacketBuilder.BuildWaitingList(ToPacketMembers(raid)));
-		return _sessions.BroadcastToAsync(ToCharacterIds(raid), packet);
+		// The compact RAID_MODIFY member records already include PartyIndex.
+		// Current client 0x01164860 reads RAID_WAITING_LIST as a waiting-user
+		// list (u16 count), NOT the upstream u32-count user-to-party mapping.
+		// Do not send that incompatible mapping after the valid member refresh.
+		byte[] memberPacket = GamePacketEnvelopeBuilder.Build(
+			0,
+			(ushort)NotiPacketType.RAID_MODIFY,
+			RaidPacketBuilder.BuildRaidMembersUpdate(raid.RaidId, ToPacketMembers(raid)));
+		return BroadcastToRaidChannelAsync(raid, memberPacket);
+	}
+
+	private Task BroadcastRaidDirectoryAsync(RaidSnapshot raid)
+	{
+		byte[] packet = BuildRaidDirectoryPacket(ToDirectoryEntries(_raids.ListRaidsByChannel(unchecked((int)(raid.RaidId >> 16)))));
+		return BroadcastToRaidChannelAsync(raid, packet);
+	}
+
+	private Task SendRaidDirectoryAsync(EnhancedClientSession session, int channelId)
+	{
+		byte[] packet = BuildRaidDirectoryPacket(ToDirectoryEntries(_raids.ListRaidsByChannel(channelId)));
+		return session.SendPacketAsync(packet);
+	}
+
+	internal static byte[] BuildRaidDirectoryPacket(IReadOnlyList<RaidDirectoryEntry> entries)
+	{
+		// Current A21 dispatch at 0x01188623 routes RAID_LIST to 0x011834B0.
+		// RAID_WAITING_LIST instead consumes u16-count waiting-player records.
+		return GamePacketEnvelopeBuilder.Build(0, (ushort)NotiPacketTypeA21.RAID_LIST,
+			RaidPacketBuilder.BuildRaidDirectory(entries));
+	}
+
+	private IEnumerable<EnhancedClientSession> GetRaidChannelSessions(int channelId)
+	{
+		foreach (EnhancedClientSession candidate in _sessions.GetAllGameSessions())
+		{
+			if (candidate != null
+				&& GameNetworkConfig.IsRaidListener(candidate.ListenerPort)
+				&& GameNetworkConfig.ResolveGameChannel(candidate.ListenerPort).ChannelId == channelId)
+			{
+				yield return candidate;
+			}
+		}
+	}
+
+	private static IReadOnlyList<RaidDirectoryEntry> ToDirectoryEntries(IReadOnlyList<RaidSnapshot> raids)
+	{
+		List<RaidDirectoryEntry> result = new List<RaidDirectoryEntry>(raids.Count);
+		foreach (RaidSnapshot raid in raids)
+		{
+			RaidMember leader = raid.Leader;
+			if (leader == null)
+				continue;
+			result.Add(new RaidDirectoryEntry
+			{
+				RaidId = raid.RaidId,
+				TitleBytes = raid.TitleBytes,
+				State = raid.State,
+				StateArgument = raid.StateArgument,
+				Leader = ToPacketMember(leader),
+				MemberCount = raid.Members.Count,
+			});
+		}
+		return result;
 	}
 
 	private static Task SendAckAsync(EnhancedClientSession session, ushort type, bool success)
@@ -388,20 +571,24 @@ public sealed partial class RaidHandler
 		return false;
 	}
 
-	private static bool TryReadTitle(byte[] body, out byte[] title)
+	internal static bool TryReadTitle(byte[] body, out byte[] title)
 	{
 		title = Array.Empty<byte>();
-		if (body == null || body.Length < 8)
+		// A21 CREATE_RAID/MODIFY_RAID_INFO carries a one-byte mode/reserved
+		// field followed by one standard dstr. The captured request
+		// 00 03 00 00 00 31 32 33 is therefore mode=0, title="123".
+		const int dstrOffset = 1;
+		if (body == null || body.Length < dstrOffset + sizeof(int))
 		{
 			return false;
 		}
-		int length = BitConverter.ToInt32(body, 4);
-		if (length < 0 || length > body.Length - 8)
+		int length = BitConverter.ToInt32(body, dstrOffset);
+		if (length < 0 || length > body.Length - dstrOffset - sizeof(int))
 		{
 			return false;
 		}
 		title = new byte[length];
-		Buffer.BlockCopy(body, 8, title, 0, length);
+		Buffer.BlockCopy(body, dstrOffset + sizeof(int), title, 0, length);
 		return true;
 	}
 

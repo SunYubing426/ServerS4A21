@@ -420,6 +420,8 @@ namespace DfoServer.Network.Handlers
                 return;
             var townId = session.Player.CurTownId;
             var areaId = session.Player.CurAreaId;
+            var arrivalPlayer = session.Player;
+            var arrivalCharacterId = arrivalPlayer.CharacterId;
 
             IReadOnlyList<EnhancedClientSession> others = _sessions?.GetSessionsInArea(
                     townId,
@@ -461,6 +463,22 @@ namespace DfoServer.Network.Handlers
                 TownAreaNotificationBuilder.BuildAreaUsers(townId, areaId, roster)));
             if (!CanContinueTownProjection(session, projectionGuard))
                 return;
+
+            // A21 0x0119B274 registers RAID_USER_FINISH_LOAD -> 0x0118C0B0,
+            // which timestamps the search gate at manager+0x17C (no body).
+            // Send after self arrival, not character-selection initialization.
+            // Only notify the arriving player; ordinary movement and another
+            // player's arrival must not restart everyone's 3-second gate.
+            if (ReferenceEquals(session.Player, arrivalPlayer)
+                && session.Player.CharacterId == arrivalCharacterId
+                && session.Player.CurTownId == townId && session.Player.CurAreaId == areaId
+                && ShouldNotifyRaidTownLoaded(session.ListenerPort, session.Player))
+            {
+                await session.SendPacketAsync(BuildRaidUserFinishLoadPacket());
+                FileLogger.Log($"[{ProtocolName}] RAID_USER_FINISH_LOAD town-arrival cid={arrivalCharacterId} town={townId} area={areaId}");
+                if (!CanContinueTownProjection(session, projectionGuard))
+                    return;
+            }
 
             // 给每个已在场玩家只推【新人】的 subtype0 + 城镇定位。
             // 旧玩家已经持有当前区域名册，0x0017 会增量插入新人；此处再发
@@ -1508,5 +1526,15 @@ namespace DfoServer.Network.Handlers
                && player.CharacterId > 0
                && player.CurrentRun == null
                && player.UserState == 0x00;
+
+        internal static bool ShouldNotifyRaidTownLoaded(int listenerPort, PlayerContext player)
+            => GameNetworkConfig.IsRaidListener(listenerPort)
+               && IsTownArrivalStateEligible(player)
+               && !player.DungeonSelectionPending
+               && player.CurTownId == GameChannelSpawnPolicy.RaidTownId;
+
+        internal static byte[] BuildRaidUserFinishLoadPacket()
+            => GamePacketEnvelopeBuilder.Build(0, (ushort)NotiPacketTypeA21.RAID_USER_FINISH_LOAD,
+                Array.Empty<byte>());
     }
 }
