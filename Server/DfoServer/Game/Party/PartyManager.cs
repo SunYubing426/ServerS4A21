@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 
 namespace DfoServer.Game.Party
 {
@@ -28,6 +29,7 @@ namespace DfoServer.Game.Party
         /// <summary>队长是否变更(队长离队时转移)。</summary>
         public bool LeaderChanged { get; set; }
         public ushort NewLeaderUserId { get; set; }
+        public bool MembershipUnchanged { get; set; }
 
         /// <summary>操作后仍在队且需被通知的成员快照(离开/踢人时不含目标本人)。</summary>
         public List<PartyMember> RemainingMembers { get; set; } = new List<PartyMember>();
@@ -776,6 +778,124 @@ namespace DfoServer.Game.Party
                         InviterPartyId = inviterParty?.PartyId ?? 0,
                         InviteePartyId = inviteeParty?.PartyId ?? 0,
                     };
+                return true;
+            }
+        }
+
+        internal PartyOpResult AcceptPreparedRaidMember(PartyMember leader, PartyMember member,
+            IReadOnlyList<Game.Raid.RaidMember> expected)
+        {
+            lock (_lock)
+            {
+                if (leader == null || member == null || expected == null || expected.Count < 2 || expected.Count > 4
+                    || expected[0].UserId != leader.UserId || expected[0].SessionId != leader.SessionId
+                    || leader.UserId == member.UserId
+                    || !expected.Any(e => e.UserId == member.UserId && e.SessionId == member.SessionId))
+                    return PartyOpResult.Fail("raid_invalid_member_identity");
+                var party = GetPartyByUser(leader.UserId);
+                var existingMemberParty = GetPartyByUser(member.UserId);
+                if (existingMemberParty != null && existingMemberParty != party)
+                    return PartyOpResult.Fail("raid_member_already_in_party");
+                if (party != null && (party.LeaderUserId != leader.UserId
+                    || party.Members.Any(p => !expected.Any(e => e.UserId == p.UserId && e.SessionId == p.SessionId))))
+                    return PartyOpResult.Fail("raid_party_conflict");
+                if (existingMemberParty != null)
+                {
+                    var updated = UpdateSettings(leader.UserId, leader.SessionId, party.TitleBytes, 4,
+                        new byte[] { 0,0,4,255,255,255,255,5,0,2,0,0 });
+                    updated.MembershipUnchanged = true;
+                    return updated;
+                }
+                if (party?.IsFull == true) return PartyOpResult.Fail("raid_party_full");
+                if (_pendingInvites.ContainsKey(member.UserId)) return PartyOpResult.Fail("raid_pending_conflict");
+                if (!RecordInvite(member.UserId, member.SessionId, leader.UserId, leader.SessionId, out var reason))
+                    return PartyOpResult.Fail(reason);
+                var joined = AcceptInvite(member.UserId, member.SessionId, leader.UserId,
+                    leader.SessionId, leader, member, out _);
+                if (joined.Ok)
+                    UpdateSettings(leader.UserId, leader.SessionId, joined.Party.TitleBytes, 4,
+                        new byte[] { 0,0,4,255,255,255,255,5,0,2,0,0 });
+                return joined;
+            }
+        }
+
+        internal bool ReassignLiveRaidMember(IReadOnlyList<Game.Raid.RaidMember> roster,
+            PartyMember moving, ushort destination, out List<Party> retired, out List<Party> formed)
+        {
+            lock (_lock)
+            {
+                retired = new List<Party>();
+                formed = new List<Party>();
+                var target = roster?.FirstOrDefault(m => m.UserId == moving?.UserId);
+                if (target == null || target.SessionId != moving.SessionId || destination > 10) return false;
+                var affected = roster.Where(m => m.UserId == target.UserId
+                    || (target.PartyIndex != 0 && m.PartyIndex == target.PartyIndex)
+                    || (destination != 0 && m.PartyIndex == destination)).ToArray();
+                if (affected.Any(m => _pendingInvites.ContainsKey(m.UserId))) return false;
+                var actualMembers = new Dictionary<ushort, PartyMember>();
+                foreach (var m in affected)
+                {
+                    var party = GetPartyByUser(m.UserId);
+                    if (m.PartyIndex == 0)
+                    {
+                        if (party != null) return false;
+                        actualMembers[m.UserId] = CloneMember(moving);
+                        continue;
+                    }
+                    var group = roster.Where(e => e.PartyIndex == m.PartyIndex).ToArray();
+                    if (party == null || party.Count != group.Length || party.PartyInfoBlock?.Length != 12
+                        || party.PartyInfoBlock[9] != 2
+                        || !party.Members.All(p => group.Any(e => e.UserId == p.UserId && e.SessionId == p.SessionId)))
+                        return false;
+                    actualMembers[m.UserId] = CloneMember(party.GetMember(m.UserId));
+                    if (!retired.Any(p => p.PartyId == party.PartyId)) retired.Add(party.CreateSnapshot());
+                }
+                if (target.PartyIndex == destination)
+                {
+                    retired.Clear();
+                    return true;
+                }
+                var groups = affected.GroupBy(m => m.UserId == target.UserId ? destination : m.PartyIndex)
+                    .Where(g => g.Key != 0).ToArray();
+                if (groups.Any(g => g.Count() > 4)) return false;
+                foreach (var group in groups)
+                {
+                    var members = group.Select(m => actualMembers[m.UserId]).ToArray();
+                    var template = GetPartyByUser(group.First().UserId) ?? new Party(0);
+                    var replacement = CreateReplacementPartyLocked(template, members[0], members);
+                    replacement.IsSinglePlay = false;
+                    replacement.UserMax = 4;
+                    replacement.PartyInfoBlock = new byte[] { 0,0,4,255,255,255,255,5,0,2,0,0 };
+                    formed.Add(replacement);
+                }
+                foreach (var old in retired)
+                {
+                    _parties.Remove(old.PartyId);
+                    foreach (var m in old.Members) _userToParty.Remove(m.UserId);
+                }
+                foreach (var party in formed)
+                {
+                    _parties.Add(party.PartyId, party);
+                    foreach (var m in party.Members) _userToParty[m.UserId] = party.PartyId;
+                }
+                formed = formed.Select(p => p.CreateSnapshot()).ToList();
+                return true;
+            }
+        }
+
+        internal bool ArePreparedRaidPartiesReady(IReadOnlyList<Game.Raid.RaidMember> members)
+        {
+            lock (_lock)
+            {
+                foreach (var group in members.Where(x => x.PartyIndex != 0).GroupBy(x => x.PartyIndex))
+                {
+                    var first = group.First();
+                    var party = GetPartyByUser(first.UserId);
+                    if (party == null || party.LeaderUserId != first.UserId || party.Count != group.Count()
+                        || party.Members.Any(p => !group.Any(e => e.UserId == p.UserId && e.SessionId == p.SessionId))
+                        || party.PartyInfoBlock == null || party.PartyInfoBlock.Length != 12 || party.PartyInfoBlock[9] != 2)
+                        return false;
+                }
                 return true;
             }
         }

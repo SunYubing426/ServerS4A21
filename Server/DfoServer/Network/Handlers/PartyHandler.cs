@@ -2278,7 +2278,8 @@ namespace DfoServer.Network.Handlers
         private async Task BroadcastPartyInfo(
             int partyId,
             bool includeP2p = true,
-            Func<Task> afterRealtime = null)
+            Func<Task> afterRealtime = null,
+            bool delayedRebroadcast = true)
         {
             if (_sessions == null || partyId <= 0)
                 return;
@@ -2287,13 +2288,15 @@ namespace DfoServer.Network.Handlers
             await BroadcastPartyInfoWithinGate(
                 partyId,
                 includeP2p,
-                afterRealtime);
+                afterRealtime,
+                delayedRebroadcast);
         }
 
         private async Task BroadcastPartyInfoWithinGate(
             int partyId,
             bool includeP2p = true,
-            Func<Task> afterRealtime = null)
+            Func<Task> afterRealtime = null,
+            bool delayedRebroadcast = true)
         {
             // PartyManager returns a detached generation. Every packet and
             // relay binding below is derived from this same immutable view.

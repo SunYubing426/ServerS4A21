@@ -1508,5 +1508,15 @@ namespace DfoServer.Network.Handlers
                && player.CharacterId > 0
                && player.CurrentRun == null
                && player.UserState == 0x00;
+
+        internal static bool ShouldNotifyRaidTownLoaded(int listenerPort, PlayerContext player)
+            => GameNetworkConfig.IsRaidListener(listenerPort)
+               && IsTownArrivalStateEligible(player)
+               && !player.DungeonSelectionPending
+               && player.CurTownId == GameChannelSpawnPolicy.RaidTownId;
+
+        internal static byte[] BuildRaidUserFinishLoadPacket()
+            => GamePacketEnvelopeBuilder.Build(0, (ushort)NotiPacketTypeA21.RAID_USER_FINISH_LOAD,
+                Array.Empty<byte>());
     }
 }

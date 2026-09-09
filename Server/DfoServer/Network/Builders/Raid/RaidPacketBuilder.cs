@@ -63,6 +63,18 @@ namespace DfoServer.Network.Builders.Raid
 
     public static class RaidPacketBuilder
     {
+        public static byte[] BuildPeerInvite(ushort inviterUserId, int peerId)
+        {
+            var writer = new GamePacketWriter();
+            writer.WriteUInt16(inviterUserId);
+            writer.WriteByte(0x0A);
+            writer.WriteInt32(peerId);
+            writer.WriteUInt16(0);
+            writer.WriteUInt16(0);
+            writer.WriteUInt16(0);
+            return writer.ToArray();
+        }
+
         public static byte[] BuildCreateAck(uint raidKey)
         {
             var writer = new GamePacketWriter();
@@ -197,6 +209,67 @@ namespace DfoServer.Network.Builders.Raid
                     throw new ArgumentException("Raid directory entries need a leader.", nameof(raids));
                 WriteRaidObject(writer, raid.RaidId, raid.TitleBytes, raid.State, raid.StateArgument, raid.Leader);
                 writer.WriteByte((byte)raid.MemberCount);
+            }
+            return writer.ToArray();
+        }
+
+        public static byte[] BuildRaidWaitingAck()
+        {
+            var writer = new GamePacketWriter();
+            writer.WriteByte(0x01);
+            for (int i = 0; i < 5; i++)
+                writer.WriteUInt32(0);
+            return writer.ToArray();
+        }
+
+        public static byte[] BuildRaidWaitingWindowState336(uint a, uint b, uint c)
+        {
+            var writer = new GamePacketWriter();
+            writer.WriteUInt32(a);
+            writer.WriteUInt32(b);
+            writer.WriteUInt32(c);
+            return writer.ToArray();
+        }
+
+        public static byte[] BuildRaidWaitingRow337(
+            ushort characterId,
+            uint field4,
+            byte recordType,
+            ushort level,
+            ushort job,
+            ushort fieldE,
+            ushort field10,
+            ushort field12,
+            ushort field14,
+            byte tail)
+        {
+            var writer = new GamePacketWriter();
+            writer.WriteUInt16(characterId);
+            writer.WriteUInt32(field4);
+            writer.WriteByte(recordType);
+            writer.WriteUInt16(level);
+            writer.WriteUInt16(job);
+            writer.WriteUInt16(fieldE);
+            writer.WriteUInt16(field10);
+            writer.WriteUInt16(field12);
+            writer.WriteUInt16(field14);
+            writer.WriteByte(tail);
+            return writer.ToArray();
+        }
+
+        public static byte[] BuildRaidWaitingDone338() => new byte[] { 0x01 };
+
+        public static byte[] BuildRaidWaitingKeys254(IReadOnlyList<(ushort characterId, byte channel, ushort level)> entries)
+        {
+            if (entries == null)
+                throw new ArgumentNullException(nameof(entries));
+            var writer = new GamePacketWriter();
+            writer.WriteUInt32((uint)entries.Count);
+            foreach (var entry in entries)
+            {
+                writer.WriteUInt16(entry.characterId);
+                writer.WriteByte(entry.channel);
+                writer.WriteUInt16(entry.level);
             }
             return writer.ToArray();
         }
