@@ -771,16 +771,6 @@ namespace DfoServer.Game.Raid
             }
         }
 
-        public RaidLeaveResult OnSessionDisconnected(Guid sessionId)
-        {
-            lock (_lock)
-            {
-                if (!_sessionToUser.TryGetValue(sessionId, out var userId))
-                    return new RaidLeaveResult { Ok = false };
-                return LeaveLocked(userId) ?? new RaidLeaveResult { Ok = false };
-            }
-        }
-
         public bool TryGetByRaidId(uint raidId, out RaidSnapshot raid)
         {
             lock (_lock)

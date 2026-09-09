@@ -387,11 +387,6 @@ public sealed partial class RaidHandler
 	public void ClearSession(Guid sessionId)
 	{
 		_objectSent.TryRemove(sessionId, out var _);
-		RaidLeaveResult result = _raids.OnSessionDisconnected(sessionId);
-		if (result.Disbanded)
-		{
-			CleanupRaidRuntimeState(result.RaidId);
-		}
 	}
 
 	private Task SendRaidObjectAsync(EnhancedClientSession session, RaidSnapshot raid)
