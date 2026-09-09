@@ -51,6 +51,16 @@ namespace DfoServer.Network.Builders.Raid
         public IReadOnlyList<uint> RuntimeValues { get; set; } = Array.Empty<uint>();
     }
 
+    public sealed class RaidDirectoryEntry
+    {
+        public uint RaidId { get; set; }
+        public byte[] TitleBytes { get; set; } = Array.Empty<byte>();
+        public uint State { get; set; }
+        public uint StateArgument { get; set; }
+        public RaidMemberSnapshot Leader { get; set; }
+        public int MemberCount { get; set; }
+    }
+
     public static class RaidPacketBuilder
     {
         public static byte[] BuildCreateAck(uint raidKey)
@@ -168,6 +178,27 @@ namespace DfoServer.Network.Builders.Raid
             writer.WriteByte((byte)members.Count);
             foreach (var member in members)
                 WriteMember(writer, member);
+        }
+
+        // NotiPacketTypeA21.RAID_LIST, client-verified layout (handler
+        // 0x11834B0): [u32 count] + count x {complete raid object
+        // (reader 0x11733E0) + [u8 memberCount]}. This is the raid directory
+        // that feeds the client's "寻找攻坚队" query window.
+        public static byte[] BuildRaidDirectory(IReadOnlyList<RaidDirectoryEntry> raids)
+        {
+            if (raids == null)
+                throw new ArgumentNullException(nameof(raids));
+
+            var writer = new GamePacketWriter();
+            writer.WriteUInt32((uint)raids.Count);
+            foreach (var raid in raids)
+            {
+                if (raid?.Leader == null)
+                    throw new ArgumentException("Raid directory entries need a leader.", nameof(raids));
+                WriteRaidObject(writer, raid.RaidId, raid.TitleBytes, raid.State, raid.StateArgument, raid.Leader);
+                writer.WriteByte((byte)raid.MemberCount);
+            }
+            return writer.ToArray();
         }
 
         public static byte[] BuildRaidRemove(uint raidId)
