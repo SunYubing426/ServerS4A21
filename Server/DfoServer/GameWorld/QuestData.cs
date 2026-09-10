@@ -623,6 +623,26 @@ namespace DfoServer.GameWorld
                 return requiredQuestIds.Count > 0 ? (uint)requiredQuestIds.Count : 1;
             }
 
+            // [raid phase clear] 的 int data 每 3 个一组：(索引, 次数, 角色标志)，
+            // 取中位=还差多少次；带 [check count] 节点时以该节点为权威值。
+            // 例: 12830 [0 5 -1 1 5 -1] -> 5,5,0 (完成阻截/灭杀安徒恩各 5 次)
+            if (typeTag == "raid phase clear")
+            {
+                int officialCount = GetCheckCount(qst);
+                if (officialCount > 0)
+                    return PackTrigger(officialCount, 0, 0);
+
+                var raidValues = ParseIntList(qst.IntData);
+                var raidCounts = new List<int>();
+                for (int i = 0; i + 3 <= raidValues.Count; i += 3)
+                    raidCounts.Add(raidValues[i + 1]);
+
+                return PackTrigger(
+                    raidCounts.Count > 0 ? raidCounts[0] : 0,
+                    raidCounts.Count > 1 ? raidCounts[1] : 0,
+                    raidCounts.Count > 2 ? raidCounts[2] : 0);
+            }
+
             if (typeTag == "condition under clear" || typeTag == "clear map")
                 return ComputeTriggerFromIntData(qst.IntData, 4);
 
@@ -669,22 +689,32 @@ namespace DfoServer.GameWorld
             return 1;
         }
 
+        // [check count] 节点不是全局权威(对 [hunt enemy] 等类型与 int data 不一致)，
+        // 只允许在明确采信它的类型里使用。
+        private static int GetCheckCount(QuestFile qst)
+        {
+            var checkCountNode = qst.Root?.GetChild("check count");
+            if (checkCountNode == null)
+                return 0;
+
+            var checkCounts = ParseIntList(
+                checkCountNode.GetFirstDataContent(qst.Content));
+            return checkCounts.Count > 0 && checkCounts[0] > 0
+                ? checkCounts[0]
+                : 0;
+        }
+
         private static bool TryComputeDailyChallengeInitTrigger(
             QuestFile qst,
             string typeTag,
             out uint trigger)
         {
             trigger = 0;
-            var checkCountNode = qst.Root?.GetChild("check count");
-            if (checkCountNode != null)
+            var officialCount = GetCheckCount(qst);
+            if (officialCount > 0)
             {
-                var checkCounts = ParseIntList(
-                    checkCountNode.GetFirstDataContent(qst.Content));
-                if (checkCounts.Count > 0 && checkCounts[0] > 0)
-                {
-                    trigger = (uint)checkCounts[0];
-                    return true;
-                }
+                trigger = (uint)officialCount;
+                return true;
             }
 
             var values = ParseIntList(qst.IntData);
