@@ -37,8 +37,11 @@ jobs:
           git clone --mirror https://gitgud.io/rewio/ServerS4A21.git /tmp/source.git
 
       - name: Push pure upstream to upstream-backup (master stays untouched)
+        env:
+          # GITHUB_TOKEN 不是自动注入的环境变量，必须显式传给这一步才能用于 git 推送鉴权
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git -C /tmp/source.git push --force \
-            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
             'refs/heads/master:refs/heads/upstream-backup' \
             'refs/tags/*:refs/tags/*'
