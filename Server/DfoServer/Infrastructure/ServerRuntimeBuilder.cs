@@ -369,6 +369,7 @@ namespace DfoServer.Infrastructure
             if (inventory == null) throw new ArgumentNullException(nameof(inventory));
             if (world == null) throw new ArgumentNullException(nameof(world));
 
+            inventory.InventoryRefreshSender.BindSessions(world.Sessions);
             return new GameProtocolCharacterInventoryHandlers(
                 new LoginHandler(
                     core.AccountRepository,
