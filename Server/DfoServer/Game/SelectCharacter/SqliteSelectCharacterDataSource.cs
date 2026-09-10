@@ -432,9 +432,20 @@ namespace DfoServer.Game.SelectCharacter
 
                 if (characterRecord.Subtype0Tail != null)
                 {
-                    Settings.AccountSettings.TryApplyCharacterVisibilityBitsToOptions(
-                        initSnapshot.MainGameOptionBlob,
-                        characterRecord.Subtype0Tail.UserStateBits);
+                    if (initSnapshot.MainGameOptionBlob != null)
+                    {
+                        initSnapshot.MainGameOptionBlob =
+                            Settings.AccountSettings.CloneMainGameOptionForCharacter(
+                                initSnapshot.MainGameOptionBlob);
+                        Settings.AccountSettings.TryApplyCharacterVisibilityBitsToOptions(
+                            initSnapshot.MainGameOptionBlob,
+                            characterRecord.Subtype0Tail.UserStateBits);
+                    }
+
+                    initSnapshot.CharacterOptionBlob =
+                        Settings.AccountSettings.ProjectCharacterOptionBlob(
+                            initSnapshot.CharacterOptionBlob,
+                            characterRecord.Subtype0Tail.UserStateBits);
                 }
 
                 
