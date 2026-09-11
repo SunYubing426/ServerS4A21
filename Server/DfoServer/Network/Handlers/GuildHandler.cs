@@ -22,7 +22,7 @@ namespace DfoServer.Network.Handlers
     //      Phase 2: 此处真正建会(guilds/guild_members 落库, 迁移 v16)
     //   0x02E7 我的工会查询 → ack cmd=1 [count][dstr工会名][dstr角色名]
     //   0x02E8 搜索 / 0x02F9 推荐 → ack [count]×{[id][dstr名][dstr宣传语]}
-    //   0x016D 加入信息 → 最小应答 [0]
+    //   CMD 0x016D 加入信息 → NOTI 0x0134 JOIN_GUILD_INFO [u32 key][u8 count][dstr 名称...]
     //
     // ===== 暂缓(会崩溃) =====
     //   NOTI 0x0046 GUILD_INFO 详情推送: handler(0x011959B0) 含条件分支读取
@@ -31,6 +31,8 @@ namespace DfoServer.Network.Handlers
     internal static class GuildHandler
     {
         private const string ProtocolName = "GameProtocol";
+        internal const ushort JoinGuildInfoNotificationType =
+            (ushort)NotiPacketTypeA21.JOIN_GUILD_INFO;
 
         // 0x02AE 结果码(客户端 handler 0x0118AE20 分派值)。
         private const byte PermitGranted = 1;
@@ -2073,8 +2075,9 @@ namespace DfoServer.Network.Handlers
         // 2026-09-04 二次定案(逆向 dnf_hang.dmp table2 handler 0x024EBDF0):
         //   客户端发送: cmd=1 空 body —— 开界面未入会时(0x007750D7, [wnd+0x1dc]==1 分支)
         //   与 0x015C 申请成功后(0x00776576)各发一次。
-        //   应答必须走 cmd=0 NOTI 0x016D: table1(cmd=1) 无 0x016D 表项, 回 cmd=1 会被
-        //   0x00D9 丢弃(旧"最小应答[0]"即此坑); table2(cmd=0) handler 0x024EBDF0。
+        //   应答必须走 cmd=0 NOTI 0x0134 JOIN_GUILD_INFO: table1(cmd=1) 无 0x016D 表项,
+        //   回 cmd=1 会被 0x00D9 丢弃; NOTI 0x016D 是 GROUP_MEMBER_LIST，误用会被客户端
+        //   当作聊天群成员包解析并打开私聊窗口。table2(cmd=0) handler 0x024EBDF0。
         //   读序: [u32 key][u8 count] + count×{[dstr 公会名]}。
         //     key   → 窗口+0x230(0x24EC420 setter; 0x24E92B0 以其为窗口查找键)
         //             → 取首个申请的公会 id(无申请=0)。
@@ -2098,12 +2101,14 @@ namespace DfoServer.Network.Handlers
             if (session != null)
             {
                 await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(
-                    0x00, 0x016D, w.ToArray()));
+                    0x00,
+                    JoinGuildInfoNotificationType,
+                    w.ToArray()));
             }
 
             FileLogger.Log(
                 $"[{ProtocolName}] GUILD JOIN_GUILD_INFO cid={cid} " +
-                $"raw={FormatBody(body)} → NOTI 0x016D key={apps.FirstOrDefault().GuildId} " +
+                $"raw={FormatBody(body)} → NOTI 0x0134 key={apps.FirstOrDefault().GuildId} " +
                 $"count={apps.Count} " +
                 $"guilds=[{string.Join(",", apps.Select(a => $"#{a.GuildId}:{a.GuildName}"))}]");
         }
