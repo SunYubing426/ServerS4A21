@@ -423,10 +423,24 @@ namespace DfoServer.Network.Handlers
             foreach (var o in others)
                 roster.Add(TownAreaNotificationBuilder.CreateCurrentSnapshot(o.Player));
 
-            // 到达者本人：0x18 进场景后先消费自己的 USERINFO0(+47)，
-            // 再按远程插入顺序发他人 USERINFO0 + USER_AREA。
-            // 14932：0x17(无 USERINFO) -> 0x18 -> 他人 USERINFO 看不到先到的人；
-            // 已在场玩家能看到后来者，是因为收的是 USERINFO0 + 0x17。
+            // 真机实测(逆向+抓包结论): 只发 0x17/0x18 客户端既不生成他人角色对象、也不主动拉外观。
+            // self 能渲染是因为进游戏时收了【完整外观】(USERINFO 0x0002 含形象)。故照"自身入场先有外观后有位置"
+            // 主动 PUSH: 给新人为【每个已在场玩家】先推一份 USERINFO(0x0002 外观)、再发 0x0017(定位/生成), 最后补 0x0018 名册。
+            // ⚠️顺序不可颠倒: 0x0018 名册必须最后发。先发名册时客户端尚无这些人
+            // 的外观，既建不出角色对象（表现为看不到人），也挂不上名字（聊天无名）。
+            foreach (var o in others)
+            {
+                await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(0x00, 0x0002,
+                    Game.Appearance.AppearanceService.BuildNoti2Body(
+                        o.Player,
+                        _database)));
+                if (!CanContinueTownProjection(session, projectionGuard))
+                    return;
+                var oSnap = TownAreaNotificationBuilder.CreateCurrentSnapshot(o.Player);
+                await session.SendPacketAsync(BuildCoPresenceInsert(oSnap));
+                if (!CanContinueTownProjection(session, projectionGuard))
+                    return;
+            }
             await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(0x00, 0x0018,
                 TownAreaNotificationBuilder.BuildAreaUsers(townId, areaId, roster)));
             if (!CanContinueTownProjection(session, projectionGuard))
