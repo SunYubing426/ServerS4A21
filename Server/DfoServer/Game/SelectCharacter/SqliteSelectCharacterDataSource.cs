@@ -435,11 +435,9 @@ namespace DfoServer.Game.SelectCharacter
                     if (initSnapshot.MainGameOptionBlob != null)
                     {
                         initSnapshot.MainGameOptionBlob =
-                            Settings.AccountSettings.CloneMainGameOptionForCharacter(
-                                initSnapshot.MainGameOptionBlob);
-                        Settings.AccountSettings.TryApplyCharacterVisibilityBitsToOptions(
-                            initSnapshot.MainGameOptionBlob,
-                            characterRecord.Subtype0Tail.UserStateBits);
+                            Settings.AccountSettings.BuildCharacterEnterGameOption(
+                                initSnapshot.MainGameOptionBlob,
+                                characterRecord.Subtype0Tail.UserStateBits);
                     }
 
                     initSnapshot.CharacterOptionBlob =
