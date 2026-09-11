@@ -1093,6 +1093,8 @@ namespace DfoServer.Network
                 _pvpRoomHandler.HandleConnectP2pPvp;
             d[PvpRoomHandler.PvpRequestFightCommandType] =
                 _pvpRoomHandler.HandlePvpRequestFight;
+            d[PvpRoomHandler.SetMapIndexCommandType] =
+                _pvpRoomHandler.HandleSetMapIndex;
             d[(ushort)CmdPacketType.SECURITY_STATUS] = HandleSecurityStatus;
         }
 

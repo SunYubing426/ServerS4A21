@@ -38,6 +38,8 @@ namespace DfoServer.Network.Handlers
         internal const ushort CompleteLoadPvpCommandType = 0x012A;
         internal const ushort ConnectP2pPvpCommandType = 0x012B;
         internal const ushort PvpRequestFightCommandType = 0x0070;
+        internal const ushort SetMapIndexCommandType =
+            (ushort)CmdPacketTypeA21.SET_PVP_MAP_INDEX;
         internal const ushort UserInfoNotificationType = 0x0002;
         internal const ushort UserStateNotificationType = 0x0003;
         internal const ushort UserAreaNotificationType = 0x0017;
@@ -3978,6 +3980,139 @@ namespace DfoServer.Network.Handlers
                 "[GameProtocol] SET_PVP_TEAM_MODE accepted: " +
                 $"cid={session.Player.CharacterId} " +
                 $"room={room.RoomId} mode={request.BattleMode} " +
+                $"revision={room.Revision}");
+        }
+
+        internal async Task HandleSetMapIndex(
+            EnhancedClientSession session,
+            GamePacketHeader header,
+            byte[] body)
+        {
+            var ran =
+                await _characterTransitions.RunIfCurrentAsync(
+                    session,
+                    () => HandleSetMapIndexWithinTransition(
+                        session,
+                        body));
+            if (!ran)
+            {
+                FileLogger.Log(
+                    "[GameProtocol] SET_PVP_MAP_INDEX ignored: " +
+                    "session no longer owns the character generation");
+            }
+        }
+
+        private async Task HandleSetMapIndexWithinTransition(
+            EnhancedClientSession session,
+            byte[] body)
+        {
+            if (!CanMutateOwnedRoom(session))
+            {
+                await SendErrorAsync(
+                    session,
+                    SetMapIndexCommandType,
+                    19);
+                return;
+            }
+            if (!SetPvpMapIndexRequest.TryParse(
+                    body,
+                    out var request))
+            {
+                FileLogger.Log(
+                    "[GameProtocol] SET_PVP_MAP_INDEX rejected: " +
+                    $"cid={session.Player.CharacterId} " +
+                    $"body={body?.Length ?? 0}B");
+                await SendErrorAsync(
+                    session,
+                    SetMapIndexCommandType,
+                    8);
+                return;
+            }
+
+            FreeDuelRoom room = null;
+            Task publication = Task.CompletedTask;
+            byte errorCode = 0;
+            await _roomPublicationGate.WaitAsync();
+            try
+            {
+                if (!CanMutateOwnedRoom(session) ||
+                    !_rooms.TryGetRoomForMember(
+                        session.Player.CharacterId,
+                        session.SessionId,
+                        out var currentRoom,
+                        out _) ||
+                    _pendingRoomJoinSessions.ContainsKey(
+                        currentRoom.RoomId))
+                {
+                    errorCode = 22;
+                }
+                else if (
+                    !_rooms.TrySetMapIndex(
+                        session.Player.CharacterId,
+                        session.SessionId,
+                        request.MapIndex,
+                        out room,
+                        out errorCode))
+                {
+                    room = null;
+                    if (errorCode == 0)
+                        errorCode = 19;
+                }
+                else
+                {
+                    var memberSessionIds =
+                        new HashSet<Guid>(
+                            GetRoomMemberTargets(
+                                    room,
+                                    skipMissing: true)
+                                .Select(
+                                    member => member.SessionId));
+                    var roomStatePacket =
+                        GamePacketEnvelopeBuilder.Build(
+                            0x00,
+                            RoomStateNotificationType,
+                            PvpRoomNotificationBuilder
+                                .BuildRoomStateBody(room));
+                    publication =
+                        Task.WhenAll(
+                            QueueRequired(
+                                GetRoomMemberTargets(
+                                    room,
+                                    skipMissing: true),
+                                room.ListenerPort,
+                                roomStatePacket),
+                            QueueRequired(
+                                GetPublicationListenerTargets(
+                                        room.ListenerPort)
+                                    .Where(
+                                        target =>
+                                            !memberSessionIds.Contains(
+                                                target.SessionId))
+                                    .ToArray(),
+                                room.ListenerPort,
+                                roomStatePacket));
+                }
+            }
+            finally
+            {
+                _roomPublicationGate.Release();
+            }
+
+            if (room == null)
+            {
+                await SendErrorAsync(
+                    session,
+                    SetMapIndexCommandType,
+                    errorCode);
+                return;
+            }
+
+            await publication;
+
+            FileLogger.Log(
+                "[GameProtocol] SET_PVP_MAP_INDEX accepted: " +
+                $"cid={session.Player.CharacterId} " +
+                $"room={room.RoomId} map={room.MapIndex} " +
                 $"revision={room.Revision}");
         }
 

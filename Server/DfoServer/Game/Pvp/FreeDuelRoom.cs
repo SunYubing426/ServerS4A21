@@ -697,6 +697,18 @@ namespace DfoServer.Game.Pvp
                 readyStates);
         }
 
+        internal FreeDuelRoom WithMapIndex(short mapIndex)
+        {
+            return Copy(
+                BattleMode,
+                _seatStates,
+                _seatSessionIds,
+                _seatCharacterIds,
+                _seatUserIds,
+                mapIndex: mapIndex,
+                selectedMapIndex: (byte)mapIndex);
+        }
+
         internal FreeDuelRoom CreateStartedSnapshot(
             byte selectedMapIndex)
         {
@@ -919,7 +931,8 @@ namespace DfoServer.Game.Pvp
             int[] deathCounts = null,
             byte? settlementPhase = null,
             byte? winnerSeat = null,
-            long? matchGeneration = null)
+            long? matchGeneration = null,
+            short? mapIndex = null)
         {
             return new FreeDuelRoom(
                 RoomId,
@@ -929,7 +942,7 @@ namespace DfoServer.Game.Pvp
                 ownerUserId ?? OwnerUserId,
                 RoomNameType,
                 _roomNameBytes,
-                MapIndex,
+                mapIndex ?? MapIndex,
                 HasPassword,
                 _passwordBytes,
                 battleMode,
