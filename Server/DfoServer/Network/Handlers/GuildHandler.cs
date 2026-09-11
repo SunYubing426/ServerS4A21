@@ -675,7 +675,7 @@ namespace DfoServer.Network.Handlers
             {
                 var nameBytes = session.Player?.Name;
                 if (nameBytes != null && nameBytes.Length > 0)
-                    charName = Encoding.UTF8.GetString(nameBytes);
+                    charName = ClientTextEncoding.GetString(nameBytes);
             }
             catch
             {
@@ -1622,7 +1622,7 @@ namespace DfoServer.Network.Handlers
             {
                 var len = BitConverter.ToInt32(body, 1);
                 if (len > 0 && len <= 200 && 5 + len <= body.Length)
-                    newMemo = Encoding.UTF8.GetString(body, 5, len);
+                    newMemo = ClientTextEncoding.GetString(body, 5, len);
             }
             FileLogger.Log(
                 $"[{ProtocolName}] GUILD PROMO_MODIFY uid={(session?.Player?.UserId).GetValueOrDefault()} " +
@@ -1912,7 +1912,7 @@ namespace DfoServer.Network.Handlers
                 var nlen = BitConverter.ToInt32(body, 0);
                 if (nlen > 0 && nlen <= 72 && 4 + nlen == body.Length)
                 {
-                    var targetName = Encoding.UTF8.GetString(body, 4, nlen);
+                    var targetName = ClientTextEncoding.GetString(body, 4, nlen);
                     await HandleKickAsync(session, cid, targetName);
                     return;
                 }
@@ -2550,7 +2550,7 @@ namespace DfoServer.Network.Handlers
             try
             {
                 if (nameBytes != null && nameBytes.Length > 0)
-                    charName = Encoding.UTF8.GetString(nameBytes);
+                    charName = ClientTextEncoding.GetString(nameBytes);
             }
             catch
             {
@@ -2737,7 +2737,7 @@ namespace DfoServer.Network.Handlers
             nextOffset = offset + 4 + (int)len;
             try
             {
-                return Encoding.UTF8.GetString(body, offset + 4, (int)len);
+                return ClientTextEncoding.GetString(body, offset + 4, (int)len);
             }
             catch
             {
@@ -3423,7 +3423,7 @@ namespace DfoServer.Network.Handlers
             {
                 var nameBytes = session?.Player?.Name;
                 if (nameBytes != null && nameBytes.Length > 0)
-                    return Encoding.UTF8.GetString(nameBytes);
+                    return ClientTextEncoding.GetString(nameBytes);
             }
             catch
             {
