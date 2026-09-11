@@ -11,6 +11,10 @@ namespace DfoServer.Game.Quests
         ClearDungeon = 3,
         SeekingItems = 4,
         HuntEnemy = 5,
+        // 团本阶段完成（[raid phase clear]）。只作用于该类型的任务，
+        // 按请求里的阶段索引递减/复原对应通道；不读客户端触发的通道位。
+        // Increment=true 表示"阶段已完成一次"→ 剩余次数递减。
+        RaidPhaseClear = 6,
     }
 
     internal sealed class QuestProgressApplicationRequest
@@ -34,6 +38,13 @@ namespace DfoServer.Game.Quests
         internal IReadOnlyDictionary<int, int> HeldItemCounts { get; set; }
         internal QuestCommandOwnerContext? CommandOwner { get; set; }
 
+        // RaidPhaseClear 专用：
+        // RaidPhaseIndex = int data 里的阶段索引，即要递减的触发器通道号（0/1/2）。
+        // RaidRoleFlag   = 调用者在本次团本中的身份（0=攻坚队长 / 1=小队长 / 2=队员），
+        //                  仅对声明了角色标志的任务生效；-1 表示不限角色。
+        internal int RaidPhaseIndex { get; set; } = -1;
+        internal int RaidRoleFlag { get; set; } = -1;
+
         internal string EventKind
         {
             get
@@ -50,6 +61,8 @@ namespace DfoServer.Game.Quests
                         return "clear-map";
                     case QuestProgressOperation.SeekingItems:
                         return "seeking-items";
+                    case QuestProgressOperation.RaidPhaseClear:
+                        return "raid-phase-clear";
                     default:
                         return "client-trigger";
                 }

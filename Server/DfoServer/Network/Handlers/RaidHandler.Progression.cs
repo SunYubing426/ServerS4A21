@@ -534,6 +534,84 @@ public sealed partial class RaidHandler
 		await StartHatcheryRecoveryTimerAsync(raid, dungeonId);
 	}
 
+	// 团本阶段完成 → 对本次阶段内清过副本的成员推进 [raid phase clear] 任务计数。
+	// 与结算奖励用同一份名单(HasClearedDungeon)，因此挂机不参与者不会被记数。
+	// phaseIndex 即任务 int data 里的阶段索引，也用于选触发器通道(0=阶段1, 1=阶段2)。
+	// 角色标志：0=攻坚队长 / 1=小队长 / 2=队员（对应 6744/6743/6742）。
+	private async Task ApplyRaidPhaseClearQuestProgressAsync(
+		RaidSnapshot raid,
+		int phaseIndex)
+	{
+		if (raid == null || _sessions == null)
+			return;
+
+		var members = raid.Members;
+		if (members == null || members.Count == 0)
+			return;
+
+		foreach (var member in members)
+		{
+			if (member == null
+				|| member.CharacterId <= 0
+				|| !_raids.HasClearedDungeon(raid.RaidId, member.UserId))
+			{
+				continue;
+			}
+
+			var roleFlag = member.UserId == raid.LeaderUserId
+				? RaidQuestRoleLeader
+				: IsSquadLeader(raid, member)
+					? RaidQuestRoleSquadLeader
+					: RaidQuestRoleMember;
+
+			if (!_sessions.TryGet((int)member.CharacterId, out var session)
+				|| session?.GameSession?.QuestManager == null)
+			{
+				continue;
+			}
+
+			try
+			{
+				await session.GameSession.QuestManager.SyncRaidPhaseClearAsync(
+					phaseIndex,
+					roleFlag);
+			}
+			catch (Exception ex)
+			{
+				FileLogger.Log(
+					$"[GameProtocol] RAID_PHASE quest sync failed " +
+					$"raid={raid.RaidId} phase={phaseIndex} " +
+					$"cid={member.CharacterId} role={roleFlag}: {ex.Message}");
+			}
+		}
+	}
+
+	// 小队长的判定：同一 PartyIndex 组内 UserId 最小者视为该队队长。
+	// TODO 待实机确认：RaidMember 未记录队伍队长，这里用确定性的组内最小 UserId 近似；
+	// 只影响 6743(小队长) 这类带角色标志的任务，不影响 12830/8514/8515(标志 -1)。
+	private static bool IsSquadLeader(RaidSnapshot raid, RaidMember member)
+	{
+		if (member.PartyIndex == 0)
+			return false;
+
+		ushort minUserId = ushort.MaxValue;
+		var count = 0;
+		foreach (var m in raid.Members)
+		{
+			if (m.PartyIndex != member.PartyIndex)
+				continue;
+			count++;
+			if (m.UserId < minUserId)
+				minUserId = m.UserId;
+		}
+
+		return count > 1 && member.UserId == minUserId;
+	}
+
+	private const int RaidQuestRoleLeader = 0;
+	private const int RaidQuestRoleSquadLeader = 1;
+	private const int RaidQuestRoleMember = 2;
+
 	private async Task CompletePhaseTwoAsync(RaidSnapshot raid)
 	{
 		if (_raids.TryEnterPhaseBreak(raid, out var result))
@@ -550,6 +628,8 @@ public sealed partial class RaidHandler
 				select member.UserId).ToArray();
 			_phaseRewardFlows[result.RaidId] = new PhaseRewardFlow(eligibleUserIds);
 			await StartPhaseOneResultMovieAsync(result.RaidId);
+			// 第二阶段完成 → [raid phase clear] 索引1（6742/6743/6744、12830 灭杀格）
+			await ApplyRaidPhaseClearQuestProgressAsync(result, 1);
 		}
 	}
 
@@ -848,6 +928,8 @@ public sealed partial class RaidHandler
 			await Task.Delay(2000);
 			await SetSymbolAsync(waiting, 105u, 1u);
 			await StartPhaseOneResultMovieAsync(waiting.RaidId);
+			// 第一阶段完成 → [raid phase clear] 索引0（8514/8515、12830 阻截格）
+			await ApplyRaidPhaseClearQuestProgressAsync(waiting, 0);
 		}
 	}
 }

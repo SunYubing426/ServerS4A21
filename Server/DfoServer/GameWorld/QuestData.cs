@@ -623,24 +623,39 @@ namespace DfoServer.GameWorld
                 return requiredQuestIds.Count > 0 ? (uint)requiredQuestIds.Count : 1;
             }
 
-            // [raid phase clear] 的 int data 每 3 个一组：(索引, 次数, 角色标志)，
-            // 取中位=还差多少次；带 [check count] 节点时以该节点为权威值。
-            // 例: 12830 [0 5 -1 1 5 -1] -> 5,5,0 (完成阻截/灭杀安徒恩各 5 次)
+            // [raid phase clear] 的 int data 每 3 个一组：(阶段索引, 次数, 角色标志)。
+            // 次数写进【阶段索引对应的那个通道】，而不是按出现顺序排列：
+            // 阶段索引同时是触发器通道号，团本阶段完成时就递减该通道。
+            // 例: 12830 [0 5 -1 1 5 -1] -> ch0=5, ch1=5
+            //     6742  [1 15 2]        -> ch1=15（队员）
+            //     8514  [0 5 -1]        -> ch0=5
             if (typeTag == "raid phase clear")
             {
-                int officialCount = GetCheckCount(qst);
-                if (officialCount > 0)
-                    return PackTrigger(officialCount, 0, 0);
-
                 var raidValues = ParseIntList(qst.IntData);
-                var raidCounts = new List<int>();
+                var raidCounts = new int[3];
                 for (int i = 0; i + 3 <= raidValues.Count; i += 3)
-                    raidCounts.Add(raidValues[i + 1]);
+                {
+                    var phaseIndex = raidValues[i];
+                    var required = raidValues[i + 1];
+                    if (phaseIndex < 0 || phaseIndex > 2 || required <= 0)
+                        continue;
+
+                    raidCounts[phaseIndex] = required;
+                }
+
+                // [check count] 只作为兜底：它不带阶段信息，全部写进通道 0。
+                // 仅当 int data 没解析出任何阶段时采用，避免把次数放错通道。
+                if (raidCounts[0] == 0 && raidCounts[1] == 0 && raidCounts[2] == 0)
+                {
+                    int officialCount = GetCheckCount(qst);
+                    if (officialCount > 0)
+                        return PackTrigger(officialCount, 0, 0);
+                }
 
                 return PackTrigger(
-                    raidCounts.Count > 0 ? raidCounts[0] : 0,
-                    raidCounts.Count > 1 ? raidCounts[1] : 0,
-                    raidCounts.Count > 2 ? raidCounts[2] : 0);
+                    raidCounts[0],
+                    raidCounts[1],
+                    raidCounts[2]);
             }
 
             if (typeTag == "condition under clear" || typeTag == "clear map")

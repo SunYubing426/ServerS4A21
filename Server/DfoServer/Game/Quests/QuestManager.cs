@@ -654,6 +654,26 @@ namespace DfoServer.Game.Quests
             await _notifications.SendActiveQuestListAsync(cid);
         }
 
+        // 团本阶段完成 → 递减 [raid phase clear] 任务对应通道，并刷新任务列表。
+        public async Task SyncRaidPhaseClearAsync(
+            int phaseIndex,
+            int roleFlag,
+            Guid sourceEventId = default)
+        {
+            int cid = _sender.CharacterId;
+            if (cid <= 0) return;
+
+            bool changed = _service.SyncRaidPhaseClear(
+                cid,
+                phaseIndex,
+                roleFlag,
+                sourceEventId);
+            if (!changed)
+                return;
+
+            await _notifications.SendActiveQuestListAsync(cid);
+        }
+
         public Task SyncHuntMonsterQuestProgressAsync(
             int dungeonId,
             int difficulty,

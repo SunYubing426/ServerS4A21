@@ -402,6 +402,45 @@ namespace DfoServer.Game.Quests
             return changed > 0;
         }
 
+        // 团本阶段完成 → 递减 [raid phase clear] 任务对应阶段通道。
+        // phaseIndex 即 int data 里的阶段索引，同时就是触发器通道号（0/1/2）。
+        // roleFlag 为该角色在本次团本中的身份（0=攻坚队长/1=小队长/2=队员）。
+        public bool SyncRaidPhaseClear(
+            int characterId,
+            int phaseIndex,
+            int roleFlag,
+            Guid sourceEventId = default)
+        {
+            if (characterId <= 0 || phaseIndex < 0 || phaseIndex > 2)
+                return false;
+
+            var applied = _progress.Apply(
+                new QuestProgressApplicationRequest
+                {
+                    CharacterId = characterId,
+                    Operation = QuestProgressOperation.RaidPhaseClear,
+                    SourceEventId = sourceEventId,
+                    Increment = true,
+                    RaidPhaseIndex = phaseIndex,
+                    RaidRoleFlag = roleFlag,
+                });
+            if (!applied.Success)
+            {
+                FileLogger.Log(
+                    $"[QuestService] RAID_PHASE progress failed cid={characterId} " +
+                    $"phase={phaseIndex} role={roleFlag} error={applied.Error}");
+                return false;
+            }
+            if (applied.Changes.Count > 0)
+            {
+                FileLogger.Log(
+                    $"[QuestService] RAID_PHASE progress: cid={characterId} " +
+                    $"phase={phaseIndex} role={roleFlag} " +
+                    $"changed={applied.Changes.Count}");
+            }
+            return applied.Changes.Count > 0;
+        }
+
         internal IReadOnlyList<QuestSetTriggerResult>
             SyncHuntMonsterQuestProgress(
                 int characterId,
