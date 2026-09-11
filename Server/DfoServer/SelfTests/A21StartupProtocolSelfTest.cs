@@ -741,6 +741,71 @@ INSERT INTO characters(character_id, account_id, name, job) VALUES(9612, 9611, '
                     + UserInfoSubtype0Builder.A21AfterAliveMoodValueOffset) == 6,
                 ref failures);
 
+            // 01C7 恒发: 无存档角色必须下发 PVF 默认键位, 否则客户端沿用上一个选取角色的键位。
+            var hotkeyBuilder = new HotkeyConfigBodyBuilder();
+            Check(
+                "A21 HOTKEY 0x01C7 sends PVF defaults for a character without saved keys",
+                hotkeyBuilder.TryBuild(
+                    new SelectCharacterDataSnapshot
+                    {
+                        CharacterRecord = new CharacterRecord
+                        {
+                            CharacterId = 9,
+                            Name = new byte[] { (byte)'a' },
+                            Job = 1,
+                        },
+                    },
+                    0,
+                    out var defaultHotkeyBody)
+                && defaultHotkeyBody != null
+                && defaultHotkeyBody.Length >= 5
+                && BitConverter.ToInt32(defaultHotkeyBody, 1) == defaultHotkeyBody.Length - 5
+                && BitConverter.ToInt32(defaultHotkeyBody, 1) > 0,
+                ref failures);
+            Check(
+                "A21 HOTKEY 0x01C7 projects a fresh creator at keyType 1 with a consistent body",
+                hotkeyBuilder.TryBuild(
+                    new SelectCharacterDataSnapshot
+                    {
+                        CharacterRecord = new CharacterRecord
+                        {
+                            CharacterId = 9,
+                            Name = new byte[] { (byte)'a' },
+                            Job = 10,
+                        },
+                    },
+                    0,
+                    out var creatorHotkeyBody)
+                && creatorHotkeyBody != null
+                && creatorHotkeyBody[0] == 1
+                && BitConverter.ToInt32(creatorHotkeyBody, 1) > 0
+                && creatorHotkeyBody.Length == 5 + BitConverter.ToInt32(creatorHotkeyBody, 1),
+                ref failures);
+            Check(
+                "A21 HOTKEY 0x01C7 still projects saved per-character keys",
+                hotkeyBuilder.TryBuild(
+                    new SelectCharacterDataSnapshot
+                    {
+                        CharacterRecord = new CharacterRecord
+                        {
+                            CharacterId = 9,
+                            Name = new byte[] { (byte)'a' },
+                            Job = 1,
+                        },
+                        InitializationSnapshot = new SelectCharacterInitializationSnapshot
+                        {
+                            HotkeyKeyType = 2,
+                            HotkeyConfigSlots = { 0x1234 },
+                        },
+                    },
+                    0,
+                    out var savedHotkeyBody)
+                && savedHotkeyBody != null
+                && savedHotkeyBody[0] == 2
+                && BitConverter.ToInt32(savedHotkeyBody, 1) == 2
+                && BitConverter.ToUInt16(savedHotkeyBody, 5) == 0x1234,
+                ref failures);
+
             var singleRecordLength = roster.Length - 18;
             var twoCharacterRoster = AccountCharacterListBodyBuilder.Build(
                 new[]
