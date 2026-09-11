@@ -523,12 +523,11 @@ namespace DfoServer.Network.Handlers.Dungeon
                 rejectReason = "no_condition_targets";
             else if (run.Phase != DungeonRunPhase.InProgress)
                 rejectReason = $"phase={run.Phase}";
-            // The condition-complete flag is relayed to every participant run;
-            // ConditionalBossSpawned/ConditionalBossCode live only on the
-            // summoning player's run, so they cannot gate another member's
-            // boss death report.
             else if (!run.BossEntranceConditionComplete)
                 rejectReason = "condition_incomplete";
+            else if (run.Instance?.Mechanisms == null
+                || !run.Instance.Mechanisms.ConditionalBossSpawned)
+                rejectReason = "boss_not_spawned";
             else if (request.BossSequence
                 != SpecialDungeonNotifier.BossSummonRuntimeKey)
                 rejectReason = "boss_seq_mismatch";
@@ -542,9 +541,11 @@ namespace DfoServer.Network.Handlers.Dungeon
                 return default;
             }
 
-            var bossCode = run.ConditionalBossCode > 0
-                ? run.ConditionalBossCode
-                : ResolveFirstConditionalSummonCode(run);
+            // The entrance condition is copied to each participant run, but
+            // the accepted summon is an instance-level fact. Use that shared
+            // fact so a non-summoner can report the death without allowing a
+            // report before the summon request was accepted.
+            var bossCode = run.Instance.Mechanisms.ConditionalBossCode;
             if (bossCode <= 0)
             {
                 FileLogger.Log(
@@ -561,20 +562,6 @@ namespace DfoServer.Network.Handlers.Dungeon
                     $"conditional boss die check " +
                     $"uid={request.UserId} bossSeq={request.BossSequence}",
                 bossCode: bossCode);
-        }
-
-        private static int ResolveFirstConditionalSummonCode(DungeonRun run)
-        {
-            var codes = run?.BossEntranceConditionalSummonCodes;
-            if (codes == null)
-                return 0;
-
-            for (var index = 0; index < codes.Count; index++)
-            {
-                if (codes[index] > 0)
-                    return codes[index];
-            }
-            return 0;
         }
 
         internal static Task OnCommandReceivedAsync(
