@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using DfoServer.Game.Dungeon;
 using DfoServer.Game.Inventory;
 
@@ -17,6 +18,7 @@ namespace DfoServer.Game.DeathTower
             new Dictionary<DeathTowerInventoryEndpoint, TowerInventoryItem>();
         private readonly HashSet<int> _seenItemIds = new HashSet<int>();
         private DnfLcg _stageLcg;
+        private int _awaitingStageLoadingRelease;
 
         public DeathTowerData.TowerConfig Config { get; }
         public int CurrentStage { get; private set; }
@@ -25,6 +27,8 @@ namespace DfoServer.Game.DeathTower
         public ushort ItemSequence { get; private set; }
         public int State { get; private set; }  // 0=init, 1=fighting, 2=cleared
         public uint StageSeed { get; private set; }
+        public bool AwaitingStageLoadingRelease =>
+            Volatile.Read(ref _awaitingStageLoadingRelease) != 0;
         internal DnfLcg StageLcg => _stageLcg;
         public IReadOnlyDictionary<ushort, DropInfo> GroundItems => _groundItems;
         public IReadOnlyDictionary<DeathTowerInventoryEndpoint, TowerInventoryItem> InventoryItems
@@ -401,6 +405,14 @@ namespace DfoServer.Game.DeathTower
 
         public void SetCleared() { State = 2; }
 
+        public void DeferStageLoadingRelease()
+        {
+            Interlocked.Exchange(ref _awaitingStageLoadingRelease, 1);
+        }
+
+        public bool ConsumeStageLoadingRelease() =>
+            Interlocked.Exchange(ref _awaitingStageLoadingRelease, 0) != 0;
+
         // 允许从 state>=1 推进(state==1: 86JP可能不发0x009F(2)直接MOVE_MAP; state==2: 正常流程)
         // state==0(init, 未开始战斗)不允许推进。
         public bool TryAdvanceStage()
@@ -589,4 +601,3 @@ namespace DfoServer.Game.DeathTower
         }
     }
 }
-

@@ -81,6 +81,22 @@ namespace DfoServer.SelfTests
                 && ReadUInt32(body, 40) == 2,
                 ref failures);
 
+            Check(
+                "stage loading release starts clear",
+                !tower.AwaitingStageLoadingRelease,
+                ref failures);
+            tower.DeferStageLoadingRelease();
+            Check(
+                "stage loading release is consumed once",
+                tower.AwaitingStageLoadingRelease
+                && tower.ConsumeStageLoadingRelease(),
+                ref failures);
+            Check(
+                "duplicate finish-loading cannot release the stage again",
+                !tower.AwaitingStageLoadingRelease
+                && !tower.ConsumeStageLoadingRelease(),
+                ref failures);
+
             Console.WriteLine(
                 failures == 0
                     ? "A21_DEATH_TOWER_PROTOCOL selftest passed."

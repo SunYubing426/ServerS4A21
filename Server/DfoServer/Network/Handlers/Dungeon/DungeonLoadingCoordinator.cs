@@ -49,7 +49,21 @@ namespace DfoServer.Network.Handlers.Dungeon
             byte[] body)
         {
             var run = session?.Player?.CurrentRun;
-            if (run == null)
+            if (run?.Tower != null)
+            {
+                if (run.Tower.ConsumeStageLoadingRelease())
+                {
+                    await session.SendPacketAsync(
+                        GamePacketEnvelopeBuilder.Build(
+                            0x00,
+                            0x001E,
+                            Array.Empty<byte>()));
+                    FileLogger.Log(
+                        "[DeathTower] SENT 0x001E FINISH_LOADING " +
+                        "(after 0x0025)");
+                }
+            }
+            else if (run == null)
             {
                 await _town.Handle_ENUM_CMDPACKET_FINISH_LOADING(
                     session,
