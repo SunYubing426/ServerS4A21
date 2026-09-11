@@ -208,19 +208,32 @@ namespace DfoServer.SelfTests
                     userId: 7,
                     bossSequence: SpecialDungeonNotifier.BossSummonRuntimeKey);
 
-                // A non-summoner party member never gets ConditionalBossSpawned
-                // or ConditionalBossCode on their own run; the gate must fall
-                // back to the shared summon list.
                 var reported = DungeonMechanismCoordinator.OnBossDieCheck(
                     session,
                     run,
                     request);
                 Check(
-                    "boss die check clears for a non-summoner once the " +
-                    "condition completion flag reached their run",
+                    "boss die check rejects before the conditional boss is spawned",
+                    !reported.ShouldClearDungeon,
+                    ref failures);
+
+                Check(
+                    "conditional boss spawn is registered once at instance scope",
+                    run.Instance.Mechanisms.TryRegisterConditionalBossSpawn(69264)
+                    && !run.Instance.Mechanisms.TryRegisterConditionalBossSpawn(69265),
+                    ref failures);
+
+                reported = DungeonMechanismCoordinator.OnBossDieCheck(
+                    session,
+                    run,
+                    request);
+                Check(
+                    "boss die check clears for a non-summoner from the shared spawn fact",
                     reported.ShouldClearDungeon && reported.BossCode == 69264,
                     ref failures);
 
+                // A stale participant-local projection must not override the
+                // instance-level BossCode selected by the accepted summon.
                 run.ConditionalBossSpawned = true;
                 run.ConditionalBossCode = 69265;
                 reported = DungeonMechanismCoordinator.OnBossDieCheck(
@@ -228,9 +241,8 @@ namespace DfoServer.SelfTests
                     run,
                     request);
                 Check(
-                    "the summoner run keeps its recorded boss code over " +
-                    "the summon list fallback",
-                    reported.ShouldClearDungeon && reported.BossCode == 69265,
+                    "participant-local boss code cannot override the shared spawn code",
+                    reported.ShouldClearDungeon && reported.BossCode == 69264,
                     ref failures);
 
                 run.BossEntranceConditionComplete = false;
@@ -254,16 +266,14 @@ namespace DfoServer.SelfTests
                     !reported.ShouldClearDungeon,
                     ref failures);
 
-                run.ConditionalBossSpawned = false;
-                run.ConditionalBossCode = 0;
+                run.Instance.Mechanisms.ResetConditionalBossSpawn();
                 run.BossEntranceConditionalSummonCodes.Clear();
                 reported = DungeonMechanismCoordinator.OnBossDieCheck(
                     session,
                     run,
                     request);
                 Check(
-                    "boss die check rejects when no summon code can " +
-                    "be resolved",
+                    "boss die check rejects after the shared spawn fact is reset",
                     !reported.ShouldClearDungeon,
                     ref failures);
             }
