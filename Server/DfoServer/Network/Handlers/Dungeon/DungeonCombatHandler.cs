@@ -276,6 +276,8 @@ namespace DfoServer.Network.Handlers.Dungeon
                 : null;
             if (scriptedDeath.SuppressRespawn)
                 DungeonRunLifecycle.CancelDeathRespawn(session);
+            else if (deathRun?.Tower != null)
+                await _svc.DeathTower.HandleTowerCharacterDeathAsync(session);
             else if (deathRun != null
                      && _svc.Tournaments.IsTournamentRun(deathRun))
                 ScheduleDeathRespawn(session);

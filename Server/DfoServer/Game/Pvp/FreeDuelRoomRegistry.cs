@@ -770,6 +770,52 @@ namespace DfoServer.Game.Pvp
             }
         }
 
+        internal bool TrySetMapIndex(
+            int ownerCharacterId,
+            Guid ownerSessionId,
+            short mapIndex,
+            out FreeDuelRoom room,
+            out byte errorCode)
+        {
+            room = null;
+            errorCode = 0;
+            if (ownerCharacterId <= 0 ||
+                ownerSessionId == Guid.Empty ||
+                mapIndex < 0)
+            {
+                errorCode = 8;
+                return false;
+            }
+
+            lock (_sync)
+            {
+                if (!TryGetOwnedRoom(
+                        ownerCharacterId,
+                        ownerSessionId,
+                        out var current))
+                {
+                    errorCode = 8;
+                    return false;
+                }
+                if (current.RoomState !=
+                    FreeDuelRoom.WaitingRoomState)
+                {
+                    errorCode = 19;
+                    return false;
+                }
+
+                if (current.MapIndex == mapIndex)
+                {
+                    room = current;
+                    return true;
+                }
+
+                room = current.WithMapIndex(mapIndex);
+                _rooms[current.RoomId] = room;
+                return true;
+            }
+        }
+
         internal bool TrySetReadyState(
             int characterId,
             Guid sessionId,

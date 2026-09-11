@@ -117,12 +117,30 @@ namespace DfoServer.Network.Handlers.Dungeon
 
             FileLogger.Log($"[DeathTower] ADVANCE: cid={session.Player.CharacterId} stage={tower.CurrentStage}/{tower.EndStage} map={tower.GetCurrentMapId()}");
 
+            tower.DeferStageLoadingRelease();
             await SendStageMap(session, tower);
 
-            await session.SendPacketAsync(GamePacketEnvelopeBuilder.Build(0x00, 0x001E, new byte[0]));
-            FileLogger.Log($"[DeathTower] SENT 0x001E FINISH_LOADING (advance)");
+            FileLogger.Log(
+                "[DeathTower] DEFER 0x001E FINISH_LOADING " +
+                "(advance, wait 0x0025)");
 
             return true;
+        }
+
+        internal async Task HandleTowerCharacterDeathAsync(
+            EnhancedClientSession session)
+        {
+            var run = session?.Player?.CurrentRun;
+            var tower = run?.Tower;
+            if (tower == null)
+                return;
+
+            DungeonRunLifecycle.CancelDeathRespawn(run);
+            FileLogger.Log(
+                $"[DeathTower] PLAYER_DEATH -> settlement: " +
+                $"cid={session.Player.CharacterId} " +
+                $"stage={tower.CurrentStage}/{tower.EndStage}");
+            await SendSettlement(session, tower, "player-death");
         }
 
         public async Task HandleStageCommand(EnhancedClientSession session, GamePacketHeader header, byte[] body)
@@ -152,7 +170,7 @@ namespace DfoServer.Network.Handlers.Dungeon
                     await SyncCurrentStageClearMapAsync(session, tower, "tower_stage_cmd");
                     if (tower.IsLastStage)
                     {
-                        await SendSettlement(session, tower);
+                        await SendSettlement(session, tower, "final-stage");
                         return;
                     }
                     break;
@@ -179,7 +197,10 @@ namespace DfoServer.Network.Handlers.Dungeon
             }
         }
 
-        private async Task SendSettlement(EnhancedClientSession session, DeathTowerSession tower)
+        private async Task SendSettlement(
+            EnhancedClientSession session,
+            DeathTowerSession tower,
+            string source)
         {
             var run = session?.Player?.CurrentRun;
             if (run == null
@@ -264,7 +285,7 @@ namespace DfoServer.Network.Handlers.Dungeon
                         identity,
                         tower,
                         runtime,
-                        "final-stage");
+                        source);
                 }
                 catch (Exception ex)
                 {
