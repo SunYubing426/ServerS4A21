@@ -1,8 +1,13 @@
+using DfoServer.Game.Dungeon;
 using DfoServer.Game.Dungeon.Tournament;
 using DfoServer.GameWorld;
+using DfoServer.Network;
 using DfoServer.Network.Builders;
+using DfoServer.Network.Handlers.Dungeon;
+using DfoServer.Network.Parsers.Dungeon;
 using System;
 using System.Collections.Generic;
+using System.Net.Sockets;
 
 namespace DfoServer.SelfTests
 {
@@ -15,6 +20,7 @@ namespace DfoServer.SelfTests
 
             VerifyTournamentPayloads(ref failures);
             VerifyBloodAltarPayloads(ref failures);
+            VerifyBossDieCheckGate(ref failures);
 
             Console.WriteLine(
                 failures == 0
@@ -166,6 +172,102 @@ namespace DfoServer.SelfTests
 
         private static uint ReadUInt32(byte[] data, int offset)
             => BitConverter.ToUInt32(data, offset);
+
+        private static void VerifyBossDieCheckGate(ref int failures)
+        {
+            using (var tcpClient = new TcpClient())
+            {
+                var session = new EnhancedClientSession(
+                    tcpClient,
+                    new GamePacketHeader());
+                session.Player.CharacterId = 10040;
+
+                var run = new DungeonRun(
+                    new DungeonInstance(2010, 0),
+                    runId: 900,
+                    runGeneration: 1,
+                    DungeonRunState.Active)
+                {
+                    Phase = DungeonRunPhase.InProgress,
+                    BossEntranceConditionTargets =
+                        new List<BossEntranceConditionTargetState>
+                        {
+                            new BossEntranceConditionTargetState
+                            {
+                                MonsterCode = 50001,
+                                Completed = true,
+                            },
+                        },
+                    BossEntranceConditionalSummonCodes =
+                        new List<int> { 69264 },
+                    BossEntranceConditionComplete = true,
+                };
+                session.Player.CurrentRun = run;
+
+                var request = new BossDieCheckRequest(
+                    userId: 7,
+                    bossSequence: SpecialDungeonNotifier.BossSummonRuntimeKey);
+
+                // A non-summoner party member never gets ConditionalBossSpawned
+                // or ConditionalBossCode on their own run; the gate must fall
+                // back to the shared summon list.
+                var reported = DungeonMechanismCoordinator.OnBossDieCheck(
+                    session,
+                    run,
+                    request);
+                Check(
+                    "boss die check clears for a non-summoner once the " +
+                    "condition completion flag reached their run",
+                    reported.ShouldClearDungeon && reported.BossCode == 69264,
+                    ref failures);
+
+                run.ConditionalBossSpawned = true;
+                run.ConditionalBossCode = 69265;
+                reported = DungeonMechanismCoordinator.OnBossDieCheck(
+                    session,
+                    run,
+                    request);
+                Check(
+                    "the summoner run keeps its recorded boss code over " +
+                    "the summon list fallback",
+                    reported.ShouldClearDungeon && reported.BossCode == 69265,
+                    ref failures);
+
+                run.BossEntranceConditionComplete = false;
+                reported = DungeonMechanismCoordinator.OnBossDieCheck(
+                    session,
+                    run,
+                    request);
+                Check(
+                    "boss die check rejects while the entrance condition " +
+                    "is incomplete",
+                    !reported.ShouldClearDungeon,
+                    ref failures);
+
+                run.BossEntranceConditionComplete = true;
+                reported = DungeonMechanismCoordinator.OnBossDieCheck(
+                    session,
+                    run,
+                    new BossDieCheckRequest(userId: 7, bossSequence: 0x1234));
+                Check(
+                    "boss die check rejects a non-summon boss sequence",
+                    !reported.ShouldClearDungeon,
+                    ref failures);
+
+                run.ConditionalBossSpawned = false;
+                run.ConditionalBossCode = 0;
+                run.BossEntranceConditionalSummonCodes.Clear();
+                reported = DungeonMechanismCoordinator.OnBossDieCheck(
+                    session,
+                    run,
+                    request);
+                Check(
+                    "boss die check rejects when no summon code can " +
+                    "be resolved",
+                    !reported.ShouldClearDungeon,
+                    ref failures);
+            }
+        }
 
         private static void Check(string name, bool condition, ref int failures)
         {

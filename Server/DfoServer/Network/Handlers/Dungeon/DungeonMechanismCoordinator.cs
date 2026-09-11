@@ -518,17 +518,42 @@ namespace DfoServer.Network.Handlers.Dungeon
                 $"kind={run.SpecialDungeon?.Kind.ToString() ?? "none"} " +
                 $"uid={request.UserId} bossSeq={request.BossSequence}");
 
-            if (!run.HasBossEntranceConditionalSummon
-                || run.Phase != DungeonRunPhase.InProgress
-                || !run.ConditionalBossSpawned
-                || request.BossSequence != SpecialDungeonNotifier.BossSummonRuntimeKey)
+            string rejectReason = null;
+            if (!run.HasBossEntranceConditionalSummon)
+                rejectReason = "no_condition_targets";
+            else if (run.Phase != DungeonRunPhase.InProgress)
+                rejectReason = $"phase={run.Phase}";
+            // The condition-complete flag is relayed to every participant run;
+            // ConditionalBossSpawned/ConditionalBossCode live only on the
+            // summoning player's run, so they cannot gate another member's
+            // boss death report.
+            else if (!run.BossEntranceConditionComplete)
+                rejectReason = "condition_incomplete";
+            else if (request.BossSequence
+                != SpecialDungeonNotifier.BossSummonRuntimeKey)
+                rejectReason = "boss_seq_mismatch";
+            if (rejectReason != null)
             {
+                FileLogger.Log(
+                    $"[DungeonMechanism] BOSS_DIE_CHECK gate rejected: " +
+                    $"cid={session.Player.CharacterId} dungeon={run.DungeonId} " +
+                    $"reason={rejectReason} uid={request.UserId} " +
+                    $"bossSeq={request.BossSequence}");
                 return default;
             }
 
-            var bossCode = run.ConditionalBossCode;
+            var bossCode = run.ConditionalBossCode > 0
+                ? run.ConditionalBossCode
+                : ResolveFirstConditionalSummonCode(run);
             if (bossCode <= 0)
+            {
+                FileLogger.Log(
+                    $"[DungeonMechanism] BOSS_DIE_CHECK gate rejected: " +
+                    $"cid={session.Player.CharacterId} dungeon={run.DungeonId} " +
+                    $"reason=boss_code_unresolved uid={request.UserId} " +
+                    $"bossSeq={request.BossSequence}");
                 return default;
+            }
 
             return new ClearRequest(
                 shouldClearDungeon: true,
@@ -536,6 +561,20 @@ namespace DfoServer.Network.Handlers.Dungeon
                     $"conditional boss die check " +
                     $"uid={request.UserId} bossSeq={request.BossSequence}",
                 bossCode: bossCode);
+        }
+
+        private static int ResolveFirstConditionalSummonCode(DungeonRun run)
+        {
+            var codes = run?.BossEntranceConditionalSummonCodes;
+            if (codes == null)
+                return 0;
+
+            for (var index = 0; index < codes.Count; index++)
+            {
+                if (codes[index] > 0)
+                    return codes[index];
+            }
+            return 0;
         }
 
         internal static Task OnCommandReceivedAsync(
